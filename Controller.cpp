@@ -158,10 +158,6 @@ void Controller::ProcessRFIDRead()
             } else if (strRFID.compareTo(s_strRFIDUidForSejong) == 0) {
                 delay(500);
                 DoLineTrace(7);
-                PivotTurnRight();
-                DoLineTrace(1);
-                PivotTurnLeft();
-                DoLineTrace(1);
             } else if (strRFID.compareTo(s_strRFIDUidForDaejeon) == 0) {
                 delay(500);
                 DoLineTrace(7);
@@ -221,9 +217,6 @@ void Controller::ProcessRFIDRead()
             } else if (strRFID.compareTo(s_strRFIDUidForSejong) == 0) {
                 delay(1000);
                 DoLineTrace(7);
-                PivotTurnRight();
-                DoLineTrace(2);
-                PivotTurnLeft();
             } else if (strRFID.compareTo(s_strRFIDUidForDaejeon) == 0) {
                 delay(700);
                 DoLineTrace(7);

@@ -81,8 +81,8 @@ private:
     String s_strRFIDUidForStart = String("647AB573");
     String s_strRFIDUidForSeoul = String("");
     String s_strRFIDUidForIncheon = String("");
-    String s_strRFIDUidForSejong = String("148EC573");
-    String s_strRFIDUidForDaejeon = String("");
+    String s_strRFIDUidForSejong = String("");
+    String s_strRFIDUidForDaejeon = String("148EC573");
     String s_strRFIDUidForDaegu = String("");
     String s_strRFIDUidForGwangju = String("");
     String s_strRFIDUidForChuncheon = String("");
