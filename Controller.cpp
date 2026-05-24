@@ -332,10 +332,10 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
         delay(150);
 
         // 🌟 2. 뒤로 충분히 이동하여 선을 완전히 벗어남 (이때는 센서 인식 아예 안 함!)
-        // SPEED_SCALE이 낮을수록 관성도 줄어 자연히 후진 거리가 줄어드므로
-        // delay는 스케일하지 않음 (PWM만 SPEED_SCALE 비율로 줄어듦)
+        // forward overshoot ∝ v² ∝ PWM² ∝ SPEED_SCALE² 이므로 후진 거리도 SPEED_SCALE² 만큼 줄여야 함.
+        // drive() PWM × SPEED_SCALE  +  delay × SPEED_SCALE  =  거리 × SPEED_SCALE².
         drive(BACKWARD, Power, BACKWARD, Power);
-        delay(400);
+        delay(400 * SPEED_SCALE);
 
         Stop();
         delay(100); // 기어 방향 전환 전 잠깐 대기 (전기적 대기, 속도 무관)
