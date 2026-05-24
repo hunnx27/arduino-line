@@ -332,12 +332,13 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
         delay(150);
 
         // 🌟 2. 뒤로 충분히 이동하여 선을 완전히 벗어남 (이때는 센서 인식 아예 안 함!)
+        // SPEED_SCALE이 낮을수록 관성도 줄어 자연히 후진 거리가 줄어드므로
+        // delay는 스케일하지 않음 (PWM만 SPEED_SCALE 비율로 줄어듦)
         drive(BACKWARD, Power, BACKWARD, Power);
-        // 400ms 동안 뒤로 갑니다. 만약 선을 덜 벗어나면 500으로 늘리고, 너무 많이 가면 300으로 줄이세요.
-        delay((unsigned long)(400 / SPEED_SCALE));
+        delay(400);
 
         Stop();
-        delay(100); // 기어 방향 전환 전 잠깐 대기
+        delay(100); // 기어 방향 전환 전 잠깐 대기 (전기적 대기, 속도 무관)
 
         // 🌟 3. 다시 앞으로 천천히 이동하면서 선을 찾음 (앞으로 갈 때 인식!)
         drive(FORWARD, Power - 40, FORWARD, Power - 40);
@@ -353,7 +354,7 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
 
         // 4. 완벽한 전진 정렬 완료!
         Stop();
-        delay(200); // 차체가 완전히 안정화될 때까지 대기한 뒤 턴을 수행
+        delay(200); // 차체 안정화 대기 (관성 잔량 처리, 속도 무관)
 
         ResetLineCounter();
         return true;
