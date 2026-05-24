@@ -143,8 +143,22 @@ void Controller::ProcessRFIDRead()
             break;
 
         case eWareHousePosition:
+            // 도시별 왕복(창고→도시→창고)을 한 RFID 태깅으로 처리. 각 블록 구조:
+            //   1) forward 경로  2) 도시 도착: 화물 내리고 180° 회전  3) return 경로
+            // 블록 종료 후 공통으로: Stop → TurnHalf → LifterUp 으로 다음 화물 픽업 자세.
             if (strRFID.compareTo(s_strRFIDUidForSeoul) == 0) {
                 delay(500);
+                DoLineTrace(7);
+                PivotTurnRight();
+                DoLineTrace(2);
+                PivotTurnLeft();
+
+                LifterDown();
+                Stop();
+                delay(700);
+                TurnHalf();
+
+                delay(1000);
                 DoLineTrace(7);
                 PivotTurnRight();
                 DoLineTrace(2);
@@ -155,11 +169,41 @@ void Controller::ProcessRFIDRead()
                 PivotTurnRight();
                 DoLineTrace(1);
                 PivotTurnLeft();
+
+                LifterDown();
+                Stop();
+                delay(700);
+                TurnHalf();
+
+                delay(1000);
+                DoLineTrace(7);
+                PivotTurnRight();
+                DoLineTrace(1);
+                PivotTurnLeft();
             } else if (strRFID.compareTo(s_strRFIDUidForSejong) == 0) {
                 delay(500);
                 DoLineTrace(7);
+
+                LifterDown();
+                Stop();
+                delay(700);
+                TurnHalf();
+
+                delay(1000);
+                DoLineTrace(7);
             } else if (strRFID.compareTo(s_strRFIDUidForDaejeon) == 0) {
                 delay(500);
+                DoLineTrace(7);
+                PivotTurnLeft();
+                DoLineTrace(1);
+                PivotTurnRight();
+
+                LifterDown();
+                Stop();
+                delay(700);
+                TurnHalf();
+
+                delay(700); // 대전 return은 기존부터 700ms (다른 도시는 1000ms)
                 DoLineTrace(7);
                 PivotTurnLeft();
                 DoLineTrace(1);
@@ -171,14 +215,51 @@ void Controller::ProcessRFIDRead()
                 DoLineTrace(1);
                 PivotTurnRight();
                 DoLineTrace(1);
+
+                LifterDown();
+                Stop();
+                delay(700);
+                TurnHalf();
+
+                delay(1000);
+                DoLineTrace(8);
+                PivotTurnLeft();
+                DoLineTrace(1);
+                PivotTurnRight();
+                DoLineTrace(1);
             } else if (strRFID.compareTo(s_strRFIDUidForGwangju) == 0) {
                 delay(500);
                 DoLineTrace(8);
                 PivotTurnLeft();
                 DoLineTrace(1);
                 PivotTurnRight();
+
+                LifterDown();
+                Stop();
+                delay(700);
+                TurnHalf();
+
+                // 광주 return은 forward와 비대칭 (forward: PivotL/LT(1)/PivotR, return: PivotL/LT(2)/PivotR/LT(1))
+                delay(1000);
+                DoLineTrace(8);
+                PivotTurnLeft();
+                DoLineTrace(2);
+                PivotTurnRight();
+                DoLineTrace(1);
             } else if (strRFID.compareTo(s_strRFIDUidForChuncheon) == 0) {
                 delay(500);
+                DoLineTrace(8);
+                PivotTurnLeft();
+                DoLineTrace(3);
+                PivotTurnRight();
+                DoLineTrace(1);
+
+                LifterDown();
+                Stop();
+                delay(700);
+                TurnHalf();
+
+                delay(1000);
                 DoLineTrace(8);
                 PivotTurnLeft();
                 DoLineTrace(3);
@@ -191,60 +272,12 @@ void Controller::ProcessRFIDRead()
                 DoLineTrace(4);
                 PivotTurnRight();
                 DoLineTrace(1);
-            }
-            mfrc522.PCD_AntennaOn();
-            state = STATE_RFIDREAD;
-            LifterDown();
-            Stop();
-            delay(700);
-            TurnHalf();
-            currentPosition = eTargetPosition;
-            break;
 
-        case 2:
-            if (strRFID.compareTo(s_strRFIDUidForSeoul) == 0) {
-                delay(1000);
-                DoLineTrace(7);
-                PivotTurnRight();
-                DoLineTrace(2);
-                PivotTurnLeft();
-            } else if (strRFID.compareTo(s_strRFIDUidForIncheon) == 0) {
-                delay(1000);
-                DoLineTrace(7);
-                PivotTurnRight();
-                DoLineTrace(1);
-                PivotTurnLeft();
-            } else if (strRFID.compareTo(s_strRFIDUidForSejong) == 0) {
-                delay(1000);
-                DoLineTrace(7);
-            } else if (strRFID.compareTo(s_strRFIDUidForDaejeon) == 0) {
+                LifterDown();
+                Stop();
                 delay(700);
-                DoLineTrace(7);
-                PivotTurnLeft();
-                DoLineTrace(1);
-                PivotTurnRight();
-            } else if (strRFID.compareTo(s_strRFIDUidForDaegu) == 0) {
-                delay(1000);
-                DoLineTrace(8);
-                PivotTurnLeft();
-                DoLineTrace(1);
-                PivotTurnRight();
-                DoLineTrace(1);
-            } else if (strRFID.compareTo(s_strRFIDUidForGwangju) == 0) {
-                delay(1000);
-                DoLineTrace(8);
-                PivotTurnLeft();
-                DoLineTrace(2);
-                PivotTurnRight();
-                DoLineTrace(1);
-            } else if (strRFID.compareTo(s_strRFIDUidForChuncheon) == 0) {
-                delay(1000);
-                DoLineTrace(8);
-                PivotTurnLeft();
-                DoLineTrace(3);
-                PivotTurnRight();
-                DoLineTrace(1);
-            } else if (strRFID.compareTo(s_strRFIDUidForJeju) == 0) {
+                TurnHalf();
+
                 delay(1000);
                 DoLineTrace(8);
                 PivotTurnLeft();
@@ -255,8 +288,8 @@ void Controller::ProcessRFIDRead()
             Stop();
             TurnHalf();
             LifterUp();
-            currentPosition = eWareHousePosition;
             mfrc522.PCD_AntennaOn();
+            // 창고 도착 — 다음 도시 태깅 대기 (currentPosition 유지)
             break;
         }
         isBusy = false;

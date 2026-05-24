@@ -33,15 +33,17 @@ Three files form a single state-machine-driven robot controller:
 
 ### Runtime state machine
 
-The robot moves between three logical positions, gated by RFID tag reads:
+The robot operates in two logical positions, gated by RFID tag reads:
 
 ```
-eInitialPosition ──(Start tag)──► eWareHousePosition ──(City tag)──► eTargetPosition ──(City tag)──► eWareHousePosition ...
+eInitialPosition ──(Start tag)──► eWareHousePosition ──(City tag, full round-trip)──► eWareHousePosition ...
 ```
 
-`ProcessRFIDRead()` in `Controller.cpp` is the **dispatcher**: it reads a tag, then runs a fixed sequence of `DoLineTrace(n)` + `PivotTurnLeft/Right()` calls keyed on `currentPosition` and the matched UID string. Each city (Seoul, Incheon, Sejong, Daejeon, Daegu, Gwangju, Chuncheon, Jeju) has its own hardcoded path. **Adding a new destination = adding a new `else if` branch in both the `eWareHousePosition` and `case 2:` (target → warehouse return) blocks** — the two blocks are NOT symmetric, edit both.
+`ProcessRFIDRead()` in `Controller.cpp` is the **dispatcher**: it reads a tag, then runs a fixed sequence of `DoLineTrace(n)` + `PivotTurnLeft/Right()` calls keyed on `currentPosition` and the matched UID string. Each city (Seoul, Incheon, Sejong, Daejeon, Daegu, Gwangju, Chuncheon, Jeju) has its own hardcoded round-trip block: **forward path → `LifterDown` + `TurnHalf` at the city → return path**. One RFID tag at the warehouse triggers the whole loop and lands the bot back at the warehouse, ready for the next city tag.
 
-The `case 2:` branch is the return-trip handler (it should logically be `case eTargetPosition`); the magic number is intentional, not a bug to "fix" without checking the enum ordering.
+**Adding a new destination = adding a new `else if` branch in `eWareHousePosition` only** — both forward and return paths live in the same block per city (no longer split across two cases). Most cities have symmetric forward/return paths; **Gwangju is intentionally asymmetric** (return has an extra `DoLineTrace(2)` + trailing `DoLineTrace(1)`), preserve as-is when editing. **Daejeon's return delay is 700 ms** (everyone else is 1000 ms) — also intentional.
+
+The `eTargetPosition` enum value is currently unused (kept for future use); `currentPosition` only ever holds `eInitialPosition` or `eWareHousePosition`.
 
 ### Line tracing
 
