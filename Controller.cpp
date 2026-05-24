@@ -1,8 +1,5 @@
 #include "Controller.h"
 
-POSITION currentPosition;
-APP_STATE state;
-
 void Controller::init() {
     pinMode(RightWheelDir, OUTPUT);
     pinMode(LeftWheelDir, OUTPUT);
@@ -15,7 +12,11 @@ void Controller::init() {
     targetLineCount = 0;
 
     readData();
-    Serial.println(_motorCalibR);
+    Serial.print("rW="); Serial.print(_rightWhite);
+    Serial.print(" lW="); Serial.print(_leftWhite);
+    Serial.print(" rB="); Serial.print(_rightBlack);
+    Serial.print(" lB="); Serial.println(_leftBlack);
+
 
     SPI.begin();
     mfrc522.PCD_Init();
@@ -24,7 +25,7 @@ void Controller::init() {
     delay(300);
     LifterDown();
 
-    state = STATE_NONE;
+    state = STATE_RFIDREAD;
 }
 
 void Controller::RunOnce()
@@ -58,6 +59,8 @@ int Controller::normalizeRight(int rawValue) {
 }
 
 bool Controller::CheckObstacle() {
+    Serial.print("sensor front center :");
+    Serial.println(analogRead(SensorFrontCenter));
     if (analogRead(SensorFrontCenter) < OBSTACLE_THRESHOLD) {
         delay(2);
         if (analogRead(SensorFrontCenter) < OBSTACLE_THRESHOLD) {
@@ -126,7 +129,7 @@ void Controller::ProcessRFIDRead()
         isBusy = true;
         mfrc522.PCD_AntennaOff();
         switch (currentPosition) {
-        case 0:
+        case eInitialPosition:
             if (strRFID.compareTo(s_strRFIDUidForStart) == 0) {
                 DoLineTrace(3);
                 PivotTurnLeft();
@@ -139,7 +142,7 @@ void Controller::ProcessRFIDRead()
             mfrc522.PCD_AntennaOn();
             break;
 
-        case 1:
+        case eWareHousePosition:
             if (strRFID.compareTo(s_strRFIDUidForSeoul) == 0) {
                 delay(500);
                 DoLineTrace(7);
@@ -361,9 +364,19 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
 // 💡 교체할 두 번째 함수: P-제어 유지 및 선을 확실히 넘어가도록 세팅
 void Controller::LineTrace() {
     static uint8_t bSignalHigh = 0;
+    static unsigned long lastSensorLog = 0;
 
     int leftRaw = GetLeft();
     int rightRaw = GetRight();
+
+    // 디버그: 200ms마다 좌/우 raw 값과 정규화 값 출력
+    if (millis() - lastSensorLog > 200) {
+        Serial.print("L_raw=");  Serial.print(leftRaw);
+        Serial.print(" R_raw="); Serial.print(rightRaw);
+        Serial.print(" | L_n="); Serial.print(normalizeLeft(leftRaw));
+        Serial.print(" R_n=");   Serial.println(normalizeRight(rightRaw));
+        lastSensorLog = millis();
+    }
 
     // 교차로(검은선 2개 동시) 판단
     if (rightRaw > LINEDETECT_THRESHOLD_MIN && leftRaw > LINEDETECT_THRESHOLD_MIN) {
@@ -530,6 +543,17 @@ int16_t Controller::GetRight()
     return analogRead(SensorBottomRight);
 }
 
+// EEPROM 캘리브레이션 이력 (2026-05-24)
+// 정규화 함수 도입 이후 R_n이 항상 0으로 클램프되어 P 제어가 한쪽으로만 꺾이는 증상.
+// 원인: 흑/백 값이 뒤집힌 상태(_black < _white)로 EEPROM에 옛값이 남아 있었음.
+//
+//                 | leftWhite | leftBlack | rightWhite | rightBlack | motorCalibL | motorCalibR
+//   Before (옛)   |    397    |    256    |    402     |    268     |    0.980    |    1.000
+//   After  (정상) |    320    |    912    |    423     |    928     |    0.980    |    1.000
+//
+// After 기준 흰 바닥 raw ≈ L 322 / R 424 로 white 캘리브 값과 일치.
+// 검은선에서는 raw가 lB/rB(~900대)에 도달하여 정규화 0~1000 풀 스윙 확보.
+// 모터 calib은 원래 정상이라 미변경.
 void Controller::readData() {
     int address = START_ADDRESS;
 

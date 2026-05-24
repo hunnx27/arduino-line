@@ -3,17 +3,14 @@
 
 #include <Arduino.h>
 #include <SPI.h>
-#include <deprecated.h>
 #include <MFRC522.h>
-#include <MFRC522Extended.h>
-#include <require_cpp11.h>
 #include <Servo.h>
 #include <EEPROM.h>
 
 #define START_ADDRESS 240
 
 #define SERVO_DOWN  90-70
-#define SERVO_UP    180-80
+#define SERVO_UP    180-100
 #define SERVO_DEF   SERVO_DOWN
 
 #define LINEDETECT_THRESHOLD_MIN 730  // 교차로 인식용 블랙 임계값
@@ -23,14 +20,13 @@
 #define BACKWARD  1
 
 // 장애물 인식 기준 거리값
-#define OBSTACLE_THRESHOLD 900
+#define OBSTACLE_THRESHOLD 500
 
 enum POSITION {
     eInitialPosition = 0,
     eWareHousePosition,
     eTargetPosition
 };
-extern POSITION currentPosition;
 
 enum APP_STATE {
     STATE_NONE = 0,
@@ -42,7 +38,6 @@ enum APP_STATE {
     STATE_TURNLEFT,
     STATE_TURNHALF
 };
-extern APP_STATE state;
 
 class Controller {
 private:
@@ -78,20 +73,23 @@ private:
     float Kp = 0.05;              // 비례 상수 (필요시 수정)
     float maxCorrection = 35.0;   // 급격한 꺾임 방지
 
-    String s_strRFIDUidForStart = String("44303B74");
-    String s_strRFIDUidForSeoul = String("84CA4874");
-    String s_strRFIDUidForIncheon = String("A4263674");
-    String s_strRFIDUidForSejong = String("446CF4BB");
-    String s_strRFIDUidForDaejeon = String("74200C74");
+    String s_strRFIDUidForStart = String("647AB573");
+    String s_strRFIDUidForSeoul = String("");
+    String s_strRFIDUidForIncheon = String("");
+    String s_strRFIDUidForSejong = String("148EC573");
+    String s_strRFIDUidForDaejeon = String("");
     String s_strRFIDUidForDaegu = String("");
     String s_strRFIDUidForGwangju = String("");
     String s_strRFIDUidForChuncheon = String("");
-    String s_strRFIDUidForJeju = String("5468E6BB");
+    String s_strRFIDUidForJeju = String("");
 
     MFRC522 mfrc522;
     Servo servo;
     String  strRFID;
     bool isBusy = false;
+
+    POSITION currentPosition = eInitialPosition;
+    APP_STATE state = STATE_NONE;
 
 public:
     bool enableObstacleAvoidance = true;
