@@ -22,6 +22,11 @@
 // 장애물 인식 기준 거리값
 #define OBSTACLE_THRESHOLD 500
 
+// 전체 속도 스케일 (1.0 = 원래 속도, 낮을수록 느림)
+// PWM은 이 비율만큼 줄고, 각도/거리를 유지해야 하는 delay는 1/SPEED_SCALE 배로 늘어남.
+// 권장 범위 0.5 ~ 1.0. 0.5 미만은 정지마찰을 못 이겨 모터가 안 돌 수 있음.
+#define SPEED_SCALE 0.6f
+
 enum POSITION {
     eInitialPosition = 0,
     eWareHousePosition,

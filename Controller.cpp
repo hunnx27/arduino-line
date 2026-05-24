@@ -73,7 +73,7 @@ bool Controller::CheckObstacle() {
 void Controller::ReverseToPreviousNode() {
     if (Serial) Serial.println("Obstacle! Reversing...");
     drive(BACKWARD, Power, BACKWARD, Power);
-    delay(500);
+    delay((unsigned long)(500 / SPEED_SCALE));
 
     while (true) {
         int right = GetRight();
@@ -334,7 +334,7 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
         // 🌟 2. 뒤로 충분히 이동하여 선을 완전히 벗어남 (이때는 센서 인식 아예 안 함!)
         drive(BACKWARD, Power, BACKWARD, Power);
         // 400ms 동안 뒤로 갑니다. 만약 선을 덜 벗어나면 500으로 늘리고, 너무 많이 가면 300으로 줄이세요.
-        delay(400);
+        delay((unsigned long)(400 / SPEED_SCALE));
 
         Stop();
         delay(100); // 기어 방향 전환 전 잠깐 대기
@@ -389,7 +389,7 @@ void Controller::LineTrace() {
         }
 
         Forward(Power);
-        delay(50); // 🌟 선을 완전히 넘어가도록 약간의 전진 딜레이 유지 (그래야 후진할 때 선을 확실히 찾습니다)
+        delay((unsigned long)(50 / SPEED_SCALE)); // 🌟 선을 완전히 넘어가도록 약간의 전진 딜레이 유지 (그래야 후진할 때 선을 확실히 찾습니다)
     }
     else {
         if (bSignalHigh) {
@@ -425,9 +425,9 @@ void Controller::Move()
 {
     Stop();
     delay(10);
-    analogWrite(LeftWheelPWM, 140);
-    analogWrite(RightWheelPWM, 140);
-    delay(100);
+    analogWrite(LeftWheelPWM, (int)(140 * SPEED_SCALE));
+    analogWrite(RightWheelPWM, (int)(140 * SPEED_SCALE));
+    delay((unsigned long)(100 / SPEED_SCALE));
 }
 
 void  Controller::drive(int dir1, int power1, int dir2, int power2)
@@ -445,11 +445,12 @@ void  Controller::drive(int dir1, int power1, int dir2, int power2)
         dirHighLow2 = HIGH;
 
     // 💡 EEPROM에 저장된 각 모터의 편차(CalibL, CalibR)를 여기서 자동 적용함
+    // SPEED_SCALE은 모든 drive() 경유 호출에 일괄 적용 (전역 속도 조절)
     digitalWrite(LeftWheelDir, dirHighLow1);
-    analogWrite(LeftWheelPWM, power1 * _motorCalibL);
+    analogWrite(LeftWheelPWM, power1 * _motorCalibL * SPEED_SCALE);
 
     digitalWrite(RightWheelDir, dirHighLow2);
-    analogWrite(RightWheelPWM, power2 * _motorCalibR);
+    analogWrite(RightWheelPWM, power2 * _motorCalibR * SPEED_SCALE);
 }
 
 void  Controller::Forward(int power)
@@ -480,9 +481,9 @@ void Controller::Stop()
 
 void Controller::TurnHalf() {
     drive(BACKWARD, 80, FORWARD, 80);
-    delay(50);
+    delay((unsigned long)(50 / SPEED_SCALE));
     drive(BACKWARD, 170, FORWARD, 170);
-    delay(450);
+    delay((unsigned long)(450 / SPEED_SCALE));
     Stop();
 }
 
@@ -497,12 +498,12 @@ void Controller::PivotTurnLeft()
 
     Move();
     delay(10);
-    analogWrite(LeftWheelPWM, 170);
-    analogWrite(RightWheelPWM, 170);
-    delay(50);
-    analogWrite(LeftWheelPWM, 90 * _motorCalibL);
-    analogWrite(RightWheelPWM, 180 * _motorCalibR);
-    delay(currentPosition == eWareHousePosition ? 140 : 110);
+    analogWrite(LeftWheelPWM, (int)(170 * SPEED_SCALE));
+    analogWrite(RightWheelPWM, (int)(170 * SPEED_SCALE));
+    delay((unsigned long)(50 / SPEED_SCALE));
+    analogWrite(LeftWheelPWM, (int)(90 * _motorCalibL * SPEED_SCALE));
+    analogWrite(RightWheelPWM, (int)(180 * _motorCalibR * SPEED_SCALE));
+    delay((unsigned long)((currentPosition == eWareHousePosition ? 140 : 110) / SPEED_SCALE));
 
     analogWrite(LeftWheelPWM, 0);
     analogWrite(RightWheelPWM, 0);
@@ -521,12 +522,12 @@ void Controller::PivotTurnRight()
 
     Move();
     delay(10);
-    analogWrite(LeftWheelPWM, 170 * _motorCalibL);
-    analogWrite(RightWheelPWM, 170 * _motorCalibR);
-    delay(50);
-    analogWrite(LeftWheelPWM, 170 * _motorCalibL);
-    analogWrite(RightWheelPWM, 90 * _motorCalibR);
-    delay(currentPosition == eWareHousePosition ? 140 : 110);
+    analogWrite(LeftWheelPWM, (int)(170 * _motorCalibL * SPEED_SCALE));
+    analogWrite(RightWheelPWM, (int)(170 * _motorCalibR * SPEED_SCALE));
+    delay((unsigned long)(50 / SPEED_SCALE));
+    analogWrite(LeftWheelPWM, (int)(170 * _motorCalibL * SPEED_SCALE));
+    analogWrite(RightWheelPWM, (int)(90 * _motorCalibR * SPEED_SCALE));
+    delay((unsigned long)((currentPosition == eWareHousePosition ? 140 : 110) / SPEED_SCALE));
 
     analogWrite(LeftWheelPWM, 0);
     analogWrite(RightWheelPWM, 0);
