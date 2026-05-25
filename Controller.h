@@ -22,6 +22,10 @@
 // 장애물 인식 기준 거리값
 #define OBSTACLE_THRESHOLD 500
 
+// 장애물 우회 방향 (1 = 좌회전, 0 = 우회전).
+// 실제 우회 후 진행 가능한 방향이 한쪽뿐인 layout 이라면 그 쪽으로 설정.
+#define OBSTACLE_BYPASS_LEFT 1
+
 // 전체 속도 스케일 (1.0 = 원래 속도, 낮을수록 느림)
 // PWM은 이 비율만큼 줄고, 각도/거리를 유지해야 하는 delay는 1/SPEED_SCALE 배로 늘어남.
 // 권장 범위 0.5 ~ 1.0. 0.5 미만은 정지마찰을 못 이겨 모터가 안 돌 수 있음.
@@ -121,6 +125,12 @@ private:
     // 현재 좌표/방향 (eInitialPosition 종료 시 init() 가 설정)
     Pose currentPose = {1, 0, HD_NORTH};
 
+    // 네비게이션 보조 상태
+    bool _preciseRealign = true;            // LineTracer 정렬 dance 수행 여부 (y=0/7 에서만 true)
+    int8_t _blockedAtX = -128;              // 직전에 장애물로 막힌 좌표 (-128 = 없음)
+    int8_t _blockedAtY = -128;
+    uint8_t _blockedDirBit = 0;             // 막힌 방향의 CONN_* 비트
+
 public:
     bool enableObstacleAvoidance = true;
 
@@ -140,7 +150,9 @@ public:
 
     // Functions for Drive
     bool LineTracer(uint16_t nTargetLineCounter);
-    void DoLineTrace(uint16_t targetCount);
+    // precise=true 시 라인 도달 후 후진-전진 정렬 dance 수행 (정확한 turn 위치 확보).
+    // 좌표 네비게이션은 y=0/y=7 에서만 precise 사용. 반환값: false 면 장애물로 인해 중단.
+    bool DoLineTrace(uint16_t targetCount, bool precise = true);
     void LineTrace();
     void ResetLineCounter();
     void Move();

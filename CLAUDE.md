@@ -52,7 +52,9 @@ A 4-column × 8-row grid (`col 0~3, row 0~7`) with the warehouse at `(1, 0)` and
 
 Adding a new city: add a `Crossing` to `CROSSINGS[]` for its position (with appropriate `conn` bits), and a `CityCoord` mapping RFID UID → `(x, y)` in `CITY_COORDS[]`. **No path code to write** — the navigator finds the route. If the navigator gets stuck (no valid direction at a crossing), it stops and prints `"Nav STUCK at (x,y)"` — that means the `CROSSINGS[]` map is missing a connection there.
 
-**Obstacle bypass** is still handled inside `DoLineTrace()` (rectangular sidestep). Because the navigator advances one crossing at a time and re-evaluates direction each step, after a bypass the bot is at a new (x, y) and the navigator naturally re-routes from there — no extra handling needed.
+**Obstacle bypass** (simplified): when `CheckObstacle()` trips during `DoLineTrace(1)`, the bot does `ReverseToPreviousNode()` + a single `PivotTurnLeft` or `PivotTurnRight` (controlled by `OBSTACLE_BYPASS_LEFT` in `Controller.h`), updates `currentPose.heading`, and returns `false`. The navigator records the blocked `(x, y, direction)` and re-runs `desiredHeading()` with that direction masked out of `conn`, so the next iteration picks an alternative. Block state clears on any successful move. **Layout requirement**: the blocked crossing must have at least one other valid direction toward the target, otherwise the navigator prints `"Nav STUCK"` and stops.
+
+**Precise realign** (the reverse-then-forward dance in `LineTracer()`) only runs when arriving at `y == 0` (warehouse row) or `y == 7` (city row) — the rows where a clean turn matters. Intermediate crossings just count and pass through with a brief stop. Controlled by `_preciseRealign` member, set per call by the `precise` parameter of `DoLineTrace()`.
 
 Initial pose is set in the `eInitialPosition` case after the start-tag sequence: `currentPose = {1, 0, HD_NORTH}`. If the physical heading after init differs, the first `navigateTo()` will issue a `TurnHalf` to correct.
 

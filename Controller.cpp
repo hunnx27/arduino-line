@@ -154,41 +154,30 @@ void Controller::ReverseToPreviousNode() {
     delay(400);
 }
 
-void Controller::DoLineTrace(uint16_t targetCount)
+bool Controller::DoLineTrace(uint16_t targetCount, bool precise)
 {
+    _preciseRealign = precise;  // LineTracer 가 도달 시점에 읽음
     while (!LineTracer(targetCount)) {
-        if (enableObstacleAvoidance) {
-            if (CheckObstacle()) {
-                Stop();
-                delay(500);
+        if (enableObstacleAvoidance && CheckObstacle()) {
+            Stop();
+            delay(500);
+            if (Serial) Serial.println("Obstacle! Backing to prev node and turning...");
 
-                if (Serial) Serial.println("Obstacle Detected! Auto Bypassing...");
-                enableObstacleAvoidance = false;
-                uint16_t savedCounter = nLineCounter;
+            ReverseToPreviousNode();
 
-                ReverseToPreviousNode();
+#if OBSTACLE_BYPASS_LEFT
+            PivotTurnLeft();
+            currentPose.heading = (Heading)(((int8_t)currentPose.heading + 3) % 4);
+#else
+            PivotTurnRight();
+            currentPose.heading = (Heading)(((int8_t)currentPose.heading + 1) % 4);
+#endif
 
-                PivotTurnLeft();
-                DoLineTrace(1);
-
-                PivotTurnRight();
-                DoLineTrace(2);
-
-                PivotTurnRight();
-                DoLineTrace(1);
-
-                PivotTurnLeft();
-
-                if (targetCount > 0) {
-                    targetCount--;
-                }
-
-                nLineCounter = savedCounter;
-                delay(300);
-                enableObstacleAvoidance = true;
-            }
+            ResetLineCounter();
+            return false;  // 네비게이터가 막힌 방향 기록 후 재계산
         }
     }
+    return true;
 }
 
 void Controller::ProcessRFIDRead()
@@ -307,38 +296,35 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
 
     // 목표한 교차로 개수에 도달했을 때
     if (nTargetLineCounter == nLineCounter) {
-        if (Serial) {
-            Serial.println("LineCount Finished. Reversing then Forward aligning...");
-        }
+        if (_preciseRealign) {
+            // 정확한 turn 이 필요한 위치 (y=0 창고 / y=7 도시) — 후진/전진 dance
+            if (Serial) Serial.println("LineCount Finished. Precise realign...");
 
-        // 1. 관성으로 밀려간 상태에서 일단 정지
-        Stop();
-        delay(150);
+            Stop();
+            delay(150);
 
-        // 🌟 2. 뒤로 충분히 이동하여 선을 완전히 벗어남 (이때는 센서 인식 아예 안 함!)
-        // forward overshoot ∝ v² ∝ PWM² ∝ SPEED_SCALE² 이므로 후진 거리도 SPEED_SCALE² 만큼 줄여야 함.
-        // drive() PWM × SPEED_SCALE  +  delay × SPEED_SCALE  =  거리 × SPEED_SCALE².
-        drive(BACKWARD, Power, BACKWARD, Power);
-        delay(400 * SPEED_SCALE);
+            // forward overshoot ∝ v² ∝ PWM² ∝ SPEED_SCALE² 이므로 후진 거리도 SPEED_SCALE² 만큼 줄임.
+            // drive() PWM × SPEED_SCALE  +  delay × SPEED_SCALE  =  거리 × SPEED_SCALE².
+            drive(BACKWARD, Power, BACKWARD, Power);
+            delay(400 * SPEED_SCALE);
 
-        Stop();
-        delay(100); // 기어 방향 전환 전 잠깐 대기 (전기적 대기, 속도 무관)
+            Stop();
+            delay(100); // 기어 방향 전환 전 잠깐 대기
 
-        // 🌟 3. 다시 앞으로 천천히 이동하면서 선을 찾음 (앞으로 갈 때 인식!)
-        drive(FORWARD, Power - 40, FORWARD, Power - 40);
-        while (true) {
-            int left = GetLeft();
-            int right = GetRight();
-
-            // 앞으로 오다가 양쪽 센서가 교차로(검은 선)를 밟으면 칼정지!
-            if (left > LINEDETECT_THRESHOLD_MIN && right > LINEDETECT_THRESHOLD_MIN) {
-                break;
+            drive(FORWARD, Power - 40, FORWARD, Power - 40);
+            while (true) {
+                int left = GetLeft();
+                int right = GetRight();
+                if (left > LINEDETECT_THRESHOLD_MIN && right > LINEDETECT_THRESHOLD_MIN) break;
             }
-        }
 
-        // 4. 완벽한 전진 정렬 완료!
-        Stop();
-        delay(200); // 차체 안정화 대기 (관성 잔량 처리, 속도 무관)
+            Stop();
+            delay(200); // 차체 안정화
+        } else {
+            // 중간 교차로 통과 — 정밀 정렬 불필요, 그냥 잠시 정지만
+            Stop();
+            delay(50);
+        }
 
         ResetLineCounter();
         return true;
@@ -589,28 +575,57 @@ void Controller::navigateTo(int8_t tx, int8_t ty) {
         Serial.print(tx); Serial.print(F(",")); Serial.print(ty); Serial.println(F(")"));
     }
 
+    // 직전 호출의 잔여 차단 정보 클리어
+    _blockedAtX = -128;
+    _blockedAtY = -128;
+    _blockedDirBit = 0;
+
     while (currentPose.x != tx || currentPose.y != ty) {
         int8_t  dx   = tx - currentPose.x;
         int8_t  dy   = ty - currentPose.y;
         uint8_t conn = lookupConn(currentPose.x, currentPose.y);
-        Heading desired = desiredHeading(dx, dy, conn);
 
+        // 직전 시도에서 막힌 방향은 일시 마스킹
+        if (_blockedAtX == currentPose.x && _blockedAtY == currentPose.y) {
+            conn &= ~_blockedDirBit;
+        }
+
+        Heading desired = desiredHeading(dx, dy, conn);
         if ((uint8_t)desired == 0xFF) {
-            // 갈 수 있는 방향이 없음 — 맵 누락이거나 잘못된 위치. 안전 정지.
             if (Serial) {
                 Serial.print(F("Nav STUCK at ("));
                 Serial.print(currentPose.x); Serial.print(F(","));
                 Serial.print(currentPose.y); Serial.print(F(") target ("));
                 Serial.print(tx); Serial.print(F(",")); Serial.print(ty);
-                Serial.println(F(") — check CROSSINGS[] map"));
+                Serial.println(F(") — check CROSSINGS[] or layout"));
             }
             Stop();
             return;
         }
 
         rotateToHeading(desired);
-        DoLineTrace(1);                         // 한 교차로만 전진 (장애물 우회는 내부에서)
-        currentPose.x += headingDx(desired);
-        currentPose.y += headingDy(desired);
+
+        // 도착할 위치가 창고 행(y=0) 또는 도시 행(y=7) 이면 정밀 정렬 사용
+        int8_t newY = currentPose.y + headingDy(desired);
+        bool precise = (newY == 0 || newY == 7);
+
+        if (DoLineTrace(1, precise)) {
+            // 성공 — 차단 해제 + pose 갱신
+            _blockedAtX = -128;
+            currentPose.x += headingDx(desired);
+            currentPose.y += headingDy(desired);
+        } else {
+            // 장애물로 중단 — 막힌 방향 기록 (heading은 DoLineTrace 안에서 이미 갱신됨)
+            _blockedAtX = currentPose.x;
+            _blockedAtY = currentPose.y;
+            switch (desired) {
+                case HD_NORTH: _blockedDirBit = CONN_N; break;
+                case HD_EAST:  _blockedDirBit = CONN_E; break;
+                case HD_SOUTH: _blockedDirBit = CONN_S; break;
+                case HD_WEST:  _blockedDirBit = CONN_W; break;
+                default: break;
+            }
+            // pose 좌표는 그대로 — 다음 iteration 이 마스킹된 conn 으로 재계산
+        }
     }
 }
