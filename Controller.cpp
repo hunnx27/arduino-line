@@ -32,10 +32,10 @@
 // === 도시 RFID UID → 좌표 매핑 ===
 // 빈 UID 는 RFID 미등록 (실제 태그 부착 후 채워 넣기)
 static const CityCoord CITY_COORDS[] = {
-    {"",         0, 7},  // Daejeon  (col 0)
+    {"",         0, 7},  // Seoul    (col 0)
     {"",         1, 7},  // Incheon  (col 1)
-    {"148EC573", 2, 7},  // Sejong   (col 2 = 메인 라인. 창고 바로 아래)
-    {"",         3, 7},  // Seoul    (col 3)
+    {"148EC573", 2, 7},  // Sejong   (col 2 = 메인 라인. 창고 바로 아래, 현재 유일한 활성 UID)
+    {"",         3, 7},  // Daejeon  (col 3)
 };
 static const uint8_t CITY_COORD_COUNT = sizeof(CITY_COORDS) / sizeof(CityCoord);
 
