@@ -28,10 +28,10 @@
 #define SPEED_SCALE 0.6f
 
 // 시작 RFID 가 놓인 그리드 좌표 (col=x, row=y) + 부팅 직후 로봇 heading.
-// 사용자 prose: (row 3, col 0) — 위쪽(row 0) 바라봄.
+// 사용자 prose: (row 3, col 0) heading 동쪽.
 #define INIT_START_X        0
 #define INIT_START_Y        3
-#define INIT_START_HEADING  HD_NORTH
+#define INIT_START_HEADING  HD_EAST
 
 // 창고 좌표 (col=x, row=y). 메인 라인 = col 2 layout.
 // 사용자 prose: warehouse at (row 0, col 2) = 내 코드 (2, 0).
