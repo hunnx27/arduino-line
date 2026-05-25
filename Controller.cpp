@@ -10,10 +10,10 @@
 // === 도시 RFID UID → 좌표 매핑 ===
 // 빈 UID 는 RFID 미등록 (실제 태그 부착 후 채워 넣기)
 static const CityCoord CITY_COORDS[] = {
-    {"148EC573", 0, 7},  // Daejeon — 현재 유일한 활성 UID
+    {"", 0, 7},  // Daejeon — 현재 유일한 활성 UID
     {"",         1, 7},  // Sejong  — UID 미입력
     {"",         2, 7},  // Incheon — UID 미입력
-    {"",         3, 7},  // Seoul   — UID 미입력
+    {"148EC573",         3, 7},  // Seoul   — UID 미입력
 };
 static const uint8_t CITY_COORD_COUNT = sizeof(CITY_COORDS) / sizeof(CityCoord);
 
@@ -151,20 +151,15 @@ bool Controller::DoLineTrace(uint16_t targetCount, bool precise)
         if (enableObstacleAvoidance && CheckObstacle()) {
             Stop();
             delay(500);
-            if (Serial) Serial.println("Obstacle! Backing to prev node and turning...");
+            if (Serial) Serial.println("Obstacle! Backing to prev node.");
 
+            // 회전은 여기서 하지 않음 — 네비게이터가 다음 iter 에서 막힌 방향
+            // 마스킹 후 최적 방향 선택, rotateToHeading 으로 한 번에 회전.
+            // (여기서 무조건 90° 좌/우 회전하면 다음 회전과 중복돼 최대 270° 됨)
             ReverseToPreviousNode();
 
-#if OBSTACLE_BYPASS_LEFT
-            PivotTurnLeft();
-            currentPose.heading = (Heading)(((int8_t)currentPose.heading + 3) % 4);
-#else
-            PivotTurnRight();
-            currentPose.heading = (Heading)(((int8_t)currentPose.heading + 1) % 4);
-#endif
-
             ResetLineCounter();
-            return false;  // 네비게이터가 막힌 방향 기록 후 재계산
+            return false;
         }
     }
     return true;
