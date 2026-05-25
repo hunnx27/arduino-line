@@ -23,31 +23,42 @@ static Heading opposite(Heading h) { return (Heading)((h + 2) % 4); }
 static int8_t headingDx(Heading h) {
     switch (h) { case HD_EAST: return 1; case HD_WEST: return -1; default: return 0; }
 }
+// HD_NORTH = row 감소 방향 (사용자 mental model 의 "북쪽" = 격자 위쪽 = row 0 방향)
 static int8_t headingDy(Heading h) {
-    switch (h) { case HD_NORTH: return 1; case HD_SOUTH: return -1; default: return 0; }
+    switch (h) { case HD_NORTH: return -1; case HD_SOUTH: return 1; default: return 0; }
 }
 
 static uint8_t lookupConn(int8_t x, int8_t y) {
     if (x < 0 || x >= GRID_COLS || y < 0 || y >= GRID_ROWS) return 0;
     uint8_t conn = 0;
-    if (y + 1 < GRID_ROWS) conn |= CONN_N;
-    if (y - 1 >= 0)        conn |= CONN_S;
+    if (y - 1 >= 0)        conn |= CONN_N;  // 위쪽(y-1) 으로 갈 수 있나
+    if (y + 1 < GRID_ROWS) conn |= CONN_S;  // 아래쪽(y+1) 으로
     if (x + 1 < GRID_COLS) conn |= CONN_E;
     if (x - 1 >= 0)        conn |= CONN_W;
     return conn;
 }
 
-// Y(세로) 우선 → X(가로) 순. 메인 라인이 세로라 이 우선순위로 트리 구조 layout 에 항상 최적해.
-// 직접 방향 막힘 (마스킹 등) 시 perpendicular fallback — 장애물 우회용.
-// 예: 세종(1,7) 가다 (1,4) 막히면 dx=0 인데도 E/W 로 우회 시도.
-static Heading desiredHeading(int8_t dx, int8_t dy, uint8_t conn) {
-    // 1) 직접 방향 우선
-    if (dy > 0 && (conn & CONN_N)) return HD_NORTH;
-    if (dy < 0 && (conn & CONN_S)) return HD_SOUTH;
+// 우선순위:
+//   0) 현재 heading 이 도움 되면 그대로 유지 (불필요한 회전 제거)
+//   1) Y(세로) → X(가로) 직접 방향
+//   2) 직접 방향 막혔으면 perpendicular fallback (장애물 우회용)
+static Heading desiredHeading(int8_t dx, int8_t dy, uint8_t conn, Heading currentHeading) {
+    // 0) 현재 heading 유지 가능하면 우선
+    switch (currentHeading) {
+        case HD_NORTH: if (dy < 0 && (conn & CONN_N)) return HD_NORTH; break;
+        case HD_SOUTH: if (dy > 0 && (conn & CONN_S)) return HD_SOUTH; break;
+        case HD_EAST:  if (dx > 0 && (conn & CONN_E)) return HD_EAST;  break;
+        case HD_WEST:  if (dx < 0 && (conn & CONN_W)) return HD_WEST;  break;
+        default: break;
+    }
+
+    // 1) Y 우선 → X 직접 방향
+    if (dy < 0 && (conn & CONN_N)) return HD_NORTH;
+    if (dy > 0 && (conn & CONN_S)) return HD_SOUTH;
     if (dx > 0 && (conn & CONN_E)) return HD_EAST;
     if (dx < 0 && (conn & CONN_W)) return HD_WEST;
 
-    // 2) Perpendicular fallback — 진행축이 막혔으면 옆으로 우회
+    // 2) Perpendicular fallback
     if (dy != 0) {
         if (conn & CONN_E) return HD_EAST;
         if (conn & CONN_W) return HD_WEST;
@@ -56,7 +67,7 @@ static Heading desiredHeading(int8_t dx, int8_t dy, uint8_t conn) {
         if (conn & CONN_S) return HD_SOUTH;
     }
 
-    return (Heading)0xFF;  // 정말 갈 곳 없음
+    return (Heading)0xFF;
 }
 
 static bool lookupCityCoord(const String& uid, int8_t* outX, int8_t* outY) {
@@ -185,7 +196,7 @@ void Controller::ProcessRFIDRead()
                 // 장애물 우회도 동일 메커니즘으로 처리됨.
                 currentPose = {INIT_START_X, INIT_START_Y, INIT_START_HEADING};
                 navigateTo(WAREHOUSE_X, WAREHOUSE_Y);
-                rotateToHeading(HD_NORTH);  // 창고에서 도시 방향(+y) 으로 정렬
+                rotateToHeading(HD_SOUTH);  // 창고에서 도시 방향(+y, row 7 쪽) 으로 정렬
                 LifterUp();
                 currentPosition = eWareHousePosition;
             }
@@ -209,12 +220,11 @@ void Controller::ProcessRFIDRead()
             bool reached = navigateTo(tx, ty);
 
             if (reached) {
-                // 정상 도착 — 화물 내리고 창고 방향(S) 으로 정렬.
-                // 도시 진입 heading 은 col 별로 N/E/W 다르지만 rotateToHeading 이 알아서 처리.
+                // 정상 도착 — 화물 내리고 창고 방향(-y, row 0 쪽 = HD_NORTH) 으로 정렬.
                 LifterDown();
                 Stop();
                 delay(700);
-                rotateToHeading(HD_SOUTH);
+                rotateToHeading(HD_NORTH);
                 delay(1000);
             } else {
                 // 도시 도달 실패 (장애물로 우회 경로 없음) — 화물 들고 그대로 창고 복귀
@@ -597,7 +607,7 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
             conn &= ~_blockedDirBit;
         }
 
-        Heading desired = desiredHeading(dx, dy, conn);
+        Heading desired = desiredHeading(dx, dy, conn, currentPose.heading);
         if ((uint8_t)desired == 0xFF) {
             if (Serial) {
                 Serial.print(F("Nav STUCK at ("));
