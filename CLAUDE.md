@@ -39,11 +39,24 @@ The robot operates in two logical positions, gated by RFID tag reads:
 eInitialPosition ──(Start tag)──► eWareHousePosition ──(City tag, full round-trip)──► eWareHousePosition ...
 ```
 
-`ProcessRFIDRead()` in `Controller.cpp` is the **dispatcher**: it reads a tag, then runs a fixed sequence of `DoLineTrace(n)` + `PivotTurnLeft/Right()` calls keyed on `currentPosition` and the matched UID string. Each city (Seoul, Incheon, Sejong, Daejeon, Daegu, Gwangju, Chuncheon, Jeju) has its own hardcoded round-trip block: **forward path → `LifterDown` + `TurnHalf` at the city → return path**. One RFID tag at the warehouse triggers the whole loop and lands the bot back at the warehouse, ready for the next city tag.
+`ProcessRFIDRead()` in `Controller.cpp` is the **dispatcher**. After the start RFID, control enters `eWareHousePosition`; each subsequent city tag triggers a full round-trip via the **coordinate-based navigator** (no more hardcoded per-city paths).
 
-**Adding a new destination = adding a new `else if` branch in `eWareHousePosition` only** — both forward and return paths live in the same block per city (no longer split across two cases). Most cities have symmetric forward/return paths; **Gwangju is intentionally asymmetric** (return has an extra `DoLineTrace(2)` + trailing `DoLineTrace(1)`), preserve as-is when editing. **Daejeon's return delay is 700 ms** (everyone else is 1000 ms) — also intentional.
+### Coordinate-based navigation
 
-The `eTargetPosition` enum value is currently unused (kept for future use); `currentPosition` only ever holds `eInitialPosition` or `eWareHousePosition`.
+A 4-column × 8-row grid (`col 0~3, row 0~7`) with the warehouse at `(1, 0)` and cities along `row 7`. Bot tracks `currentPose = {x, y, heading}` and at each crossing decides the next direction by:
+
+1. Compute `(dx, dy)` to target.
+2. Look up the current crossing's `conn` bitmask (`CONN_N|CONN_E|CONN_S|CONN_W`) in the `CROSSINGS[]` table.
+3. **Y-first greedy**: prefer N/S when `dy != 0` and that direction is in `conn`; otherwise fall back to E/W. This produces optimal paths for the current tree-shaped layout.
+4. `rotateToHeading()` issues a `PivotTurn*`/`TurnHalf` if needed, then `DoLineTrace(1)` advances one crossing.
+
+Adding a new city: add a `Crossing` to `CROSSINGS[]` for its position (with appropriate `conn` bits), and a `CityCoord` mapping RFID UID → `(x, y)` in `CITY_COORDS[]`. **No path code to write** — the navigator finds the route. If the navigator gets stuck (no valid direction at a crossing), it stops and prints `"Nav STUCK at (x,y)"` — that means the `CROSSINGS[]` map is missing a connection there.
+
+**Obstacle bypass** is still handled inside `DoLineTrace()` (rectangular sidestep). Because the navigator advances one crossing at a time and re-evaluates direction each step, after a bypass the bot is at a new (x, y) and the navigator naturally re-routes from there — no extra handling needed.
+
+Initial pose is set in the `eInitialPosition` case after the start-tag sequence: `currentPose = {1, 0, HD_NORTH}`. If the physical heading after init differs, the first `navigateTo()` will issue a `TurnHalf` to correct.
+
+The `eTargetPosition` enum value is unused; `currentPosition` only ever holds `eInitialPosition` or `eWareHousePosition`.
 
 ### Line tracing
 

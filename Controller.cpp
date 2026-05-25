@@ -1,5 +1,73 @@
 #include "Controller.h"
 
+// === 좌표 맵 (4열 × 8행 그리드) ===
+// 창고: (1, 0), 도시 행: y=7, 메인 라인: x=1
+// TODO: 실제 라인 레이아웃과 대조 후 보정 — 분기점 누락/추가 시 여기만 수정.
+static const Crossing CROSSINGS[] = {
+    // 메인 라인 (창고 → 도시 행, x=1)
+    {1, 0, CONN_N},                                  // 창고 (북쪽으로만)
+    {1, 1, CONN_N|CONN_S},
+    {1, 2, CONN_N|CONN_S},
+    {1, 3, CONN_N|CONN_S},
+    {1, 4, CONN_N|CONN_S},
+    {1, 5, CONN_N|CONN_S},
+    {1, 6, CONN_N|CONN_S},
+    // 도시 행 (y = 7) — 좌우로 연결
+    {0, 7, CONN_E},                                  // col 0 도시 (Daejeon)
+    {1, 7, CONN_S|CONN_E|CONN_W},                    // col 1 도시 (Sejong, 메인 라인 종점)
+    {2, 7, CONN_E|CONN_W},                           // col 2 도시 (Incheon)
+    {3, 7, CONN_W},                                  // col 3 도시 (Seoul)
+};
+static const uint8_t CROSSING_COUNT = sizeof(CROSSINGS) / sizeof(Crossing);
+
+// === 도시 RFID UID → 좌표 매핑 ===
+// 빈 UID 는 RFID 미등록 (실제 태그 부착 후 채워 넣기)
+static const CityCoord CITY_COORDS[] = {
+    {"148EC573", 0, 7},  // Daejeon — 현재 유일한 활성 UID
+    {"",         1, 7},  // Sejong  — UID 미입력
+    {"",         2, 7},  // Incheon — UID 미입력
+    {"",         3, 7},  // Seoul   — UID 미입력
+};
+static const uint8_t CITY_COORD_COUNT = sizeof(CITY_COORDS) / sizeof(CityCoord);
+
+// === 네비게이션 헬퍼 ===
+static Heading opposite(Heading h) { return (Heading)((h + 2) % 4); }
+
+static int8_t headingDx(Heading h) {
+    switch (h) { case HD_EAST: return 1; case HD_WEST: return -1; default: return 0; }
+}
+static int8_t headingDy(Heading h) {
+    switch (h) { case HD_NORTH: return 1; case HD_SOUTH: return -1; default: return 0; }
+}
+
+static uint8_t lookupConn(int8_t x, int8_t y) {
+    for (uint8_t i = 0; i < CROSSING_COUNT; i++) {
+        if (CROSSINGS[i].x == x && CROSSINGS[i].y == y) return CROSSINGS[i].conn;
+    }
+    return 0;
+}
+
+// Y(세로) 우선 → X(가로) 순. 메인 라인이 세로라 이 우선순위로 트리 구조 layout 에 항상 최적해.
+static Heading desiredHeading(int8_t dx, int8_t dy, uint8_t conn) {
+    if (dy > 0 && (conn & CONN_N)) return HD_NORTH;
+    if (dy < 0 && (conn & CONN_S)) return HD_SOUTH;
+    if (dx > 0 && (conn & CONN_E)) return HD_EAST;
+    if (dx < 0 && (conn & CONN_W)) return HD_WEST;
+    return (Heading)0xFF;  // 갈 곳 없음
+}
+
+static bool lookupCityCoord(const String& uid, int8_t* outX, int8_t* outY) {
+    for (uint8_t i = 0; i < CITY_COORD_COUNT; i++) {
+        if (CITY_COORDS[i].uid[0] == '\0') continue;  // 미등록 UID skip
+        if (uid.compareTo(CITY_COORDS[i].uid) == 0) {
+            *outX = CITY_COORDS[i].x;
+            *outY = CITY_COORDS[i].y;
+            return true;
+        }
+    }
+    return false;
+}
+
 void Controller::init() {
     pinMode(RightWheelDir, OUTPUT);
     pinMode(LeftWheelDir, OUTPUT);
@@ -139,182 +207,48 @@ void Controller::ProcessRFIDRead()
             TurnHalf();
             LifterUp();
             currentPosition = eWareHousePosition;
+            // 좌표계 초기화 — init 시퀀스 종료 직후 로봇이 창고에서 도시 방향(N)을 보고 있다고 선언.
+            // 실제 물리적 heading 과 다르면 navigateTo 가 첫 호출 때 TurnHalf 로 자동 보정함.
+            currentPose = {1, 0, HD_NORTH};
             mfrc522.PCD_AntennaOn();
             break;
 
-        case eWareHousePosition:
-            // 도시별 왕복(창고→도시→창고)을 한 RFID 태깅으로 처리. 각 블록 구조:
-            //   1) forward 경로  2) 도시 도착: 화물 내리고 180° 회전  3) return 경로
-            // 블록 종료 후 공통으로: Stop → TurnHalf → LifterUp 으로 다음 화물 픽업 자세.
-            if (strRFID.compareTo(s_strRFIDUidForSeoul) == 0) {
-                // ── 1) 도시 가기 (창고 → 서울) ──
-                delay(500);
-                DoLineTrace(7);
-                PivotTurnRight();
-                DoLineTrace(2);
-                PivotTurnLeft();
-
-                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
-                LifterDown();
-                Stop();
-                delay(700);
-                TurnHalf();
-
-                // ── 3) 물류창고로 복귀 (서울 → 창고) ──
-                delay(1000);
-                DoLineTrace(7);
-                PivotTurnRight();
-                DoLineTrace(2);
-                PivotTurnLeft();
-            } else if (strRFID.compareTo(s_strRFIDUidForIncheon) == 0) {
-                // ── 1) 도시 가기 (창고 → 인천) ──
-                delay(500);
-                DoLineTrace(7);
-                PivotTurnRight();
-                DoLineTrace(1);
-                PivotTurnLeft();
-
-                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
-                LifterDown();
-                Stop();
-                delay(700);
-                TurnHalf();
-
-                // ── 3) 물류창고로 복귀 (인천 → 창고) ──
-                delay(1000);
-                DoLineTrace(7);
-                PivotTurnRight();
-                DoLineTrace(1);
-                PivotTurnLeft();
-            } else if (strRFID.compareTo(s_strRFIDUidForSejong) == 0) {
-                // ── 1) 도시 가기 (창고 → 세종) ──
-                delay(500);
-                DoLineTrace(7);
-
-                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
-                LifterDown();
-                Stop();
-                delay(700);
-                TurnHalf();
-
-                // ── 3) 물류창고로 복귀 (세종 → 창고) ──
-                delay(1000);
-                DoLineTrace(7);
-            } else if (strRFID.compareTo(s_strRFIDUidForDaejeon) == 0) {
-                // ── 1) 도시 가기 (창고 → 대전) ──
-                delay(500);
-                DoLineTrace(7);
-                PivotTurnLeft();
-                DoLineTrace(1);
-                PivotTurnRight();
-
-                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
-                LifterDown();
-                Stop();
-                delay(700);
-                TurnHalf();
-
-                // ── 3) 물류창고로 복귀 (대전 → 창고) ──
-                delay(700); // 대전 return은 기존부터 700ms (다른 도시는 1000ms)
-                DoLineTrace(7);
-                PivotTurnLeft();
-                DoLineTrace(1);
-                PivotTurnRight();
-            } else if (strRFID.compareTo(s_strRFIDUidForDaegu) == 0) {
-                // ── 1) 도시 가기 (창고 → 대구) ──
-                delay(500);
-                DoLineTrace(8);
-                PivotTurnLeft();
-                DoLineTrace(1);
-                PivotTurnRight();
-                DoLineTrace(1);
-
-                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
-                LifterDown();
-                Stop();
-                delay(700);
-                TurnHalf();
-
-                // ── 3) 물류창고로 복귀 (대구 → 창고) ──
-                delay(1000);
-                DoLineTrace(8);
-                PivotTurnLeft();
-                DoLineTrace(1);
-                PivotTurnRight();
-                DoLineTrace(1);
-            } else if (strRFID.compareTo(s_strRFIDUidForGwangju) == 0) {
-                // ── 1) 도시 가기 (창고 → 광주) ──
-                delay(500);
-                DoLineTrace(8);
-                PivotTurnLeft();
-                DoLineTrace(1);
-                PivotTurnRight();
-
-                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
-                LifterDown();
-                Stop();
-                delay(700);
-                TurnHalf();
-
-                // ── 3) 물류창고로 복귀 (광주 → 창고) ──
-                // 광주 return은 forward와 비대칭 (forward: PivotL/LT(1)/PivotR, return: PivotL/LT(2)/PivotR/LT(1))
-                delay(1000);
-                DoLineTrace(8);
-                PivotTurnLeft();
-                DoLineTrace(2);
-                PivotTurnRight();
-                DoLineTrace(1);
-            } else if (strRFID.compareTo(s_strRFIDUidForChuncheon) == 0) {
-                // ── 1) 도시 가기 (창고 → 춘천) ──
-                delay(500);
-                DoLineTrace(8);
-                PivotTurnLeft();
-                DoLineTrace(3);
-                PivotTurnRight();
-                DoLineTrace(1);
-
-                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
-                LifterDown();
-                Stop();
-                delay(700);
-                TurnHalf();
-
-                // ── 3) 물류창고로 복귀 (춘천 → 창고) ──
-                delay(1000);
-                DoLineTrace(8);
-                PivotTurnLeft();
-                DoLineTrace(3);
-                PivotTurnRight();
-                DoLineTrace(1);
-            } else if (strRFID.compareTo(s_strRFIDUidForJeju) == 0) {
-                // ── 1) 도시 가기 (창고 → 제주) ──
-                delay(500);
-                DoLineTrace(8);
-                PivotTurnLeft();
-                DoLineTrace(4);
-                PivotTurnRight();
-                DoLineTrace(1);
-
-                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
-                LifterDown();
-                Stop();
-                delay(700);
-                TurnHalf();
-
-                // ── 3) 물류창고로 복귀 (제주 → 창고) ──
-                delay(1000);
-                DoLineTrace(8);
-                PivotTurnLeft();
-                DoLineTrace(4);
-                PivotTurnRight();
-                DoLineTrace(1);
+        case eWareHousePosition: {
+            // 좌표 기반 디스패치 — UID 로 목적지 좌표 찾고 navigateTo 로 왕복.
+            int8_t tx, ty;
+            if (!lookupCityCoord(strRFID, &tx, &ty)) {
+                if (Serial) {
+                    Serial.print(F("Unknown city UID: ["));
+                    Serial.print(strRFID); Serial.println(F("]"));
+                }
+                mfrc522.PCD_AntennaOn();
+                break;
             }
+
+            // ── 1) 도시 가기 ──
+            delay(500);
+            navigateTo(tx, ty);
+
+            // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
+            LifterDown();
+            Stop();
+            delay(700);
+            TurnHalf();
+            currentPose.heading = opposite(currentPose.heading);
+
+            // ── 3) 물류창고로 복귀 ──
+            delay(1000);
+            navigateTo(1, 0);  // 창고 좌표
+
+            // 다음 화물 픽업 자세 (180° 회전하여 도시 방향으로 다시 face)
             Stop();
             TurnHalf();
+            currentPose.heading = opposite(currentPose.heading);
             LifterUp();
+
             mfrc522.PCD_AntennaOn();
-            // 창고 도착 — 다음 도시 태깅 대기 (currentPosition 유지)
             break;
+        }
         }
         isBusy = false;
     }
@@ -629,4 +563,54 @@ void Controller::PlayMelody() {
     tone(pinBuzzer, 587);
     delay(300);
     noTone(pinBuzzer);
+}
+
+// === 좌표 네비게이션 ===
+// 매 교차로마다 (dx, dy) 와 현재 교차로의 연결성을 보고 다음 진행 방향을 결정.
+// PivotTurn + DoLineTrace(1) 단위로 진행하므로 장애물 우회는 DoLineTrace 내부 로직이
+// 자연히 처리하고, 좌표는 매 step 마다 갱신되어 우회 후에도 일관됨.
+
+void Controller::rotateToHeading(Heading target) {
+    int8_t delta = ((int8_t)target - (int8_t)currentPose.heading + 4) % 4;
+    switch (delta) {
+        case 0: /* 직진 그대로 */          break;
+        case 1: PivotTurnRight();           break;
+        case 2: TurnHalf();                 break;
+        case 3: PivotTurnLeft();            break;
+    }
+    currentPose.heading = target;
+}
+
+void Controller::navigateTo(int8_t tx, int8_t ty) {
+    if (Serial) {
+        Serial.print(F("Nav: ("));
+        Serial.print(currentPose.x); Serial.print(F(","));
+        Serial.print(currentPose.y); Serial.print(F(") -> ("));
+        Serial.print(tx); Serial.print(F(",")); Serial.print(ty); Serial.println(F(")"));
+    }
+
+    while (currentPose.x != tx || currentPose.y != ty) {
+        int8_t  dx   = tx - currentPose.x;
+        int8_t  dy   = ty - currentPose.y;
+        uint8_t conn = lookupConn(currentPose.x, currentPose.y);
+        Heading desired = desiredHeading(dx, dy, conn);
+
+        if ((uint8_t)desired == 0xFF) {
+            // 갈 수 있는 방향이 없음 — 맵 누락이거나 잘못된 위치. 안전 정지.
+            if (Serial) {
+                Serial.print(F("Nav STUCK at ("));
+                Serial.print(currentPose.x); Serial.print(F(","));
+                Serial.print(currentPose.y); Serial.print(F(") target ("));
+                Serial.print(tx); Serial.print(F(",")); Serial.print(ty);
+                Serial.println(F(") — check CROSSINGS[] map"));
+            }
+            Stop();
+            return;
+        }
+
+        rotateToHeading(desired);
+        DoLineTrace(1);                         // 한 교차로만 전진 (장애물 우회는 내부에서)
+        currentPose.x += headingDx(desired);
+        currentPose.y += headingDy(desired);
+    }
 }

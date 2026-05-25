@@ -44,6 +44,35 @@ enum APP_STATE {
     STATE_TURNHALF
 };
 
+// === 좌표 기반 네비게이션 타입 ===
+enum Heading : uint8_t {
+    HD_NORTH = 0, HD_EAST = 1, HD_SOUTH = 2, HD_WEST = 3
+};
+
+// 4방향 비트마스크 (Crossing.conn 용)
+#define CONN_N  0x01
+#define CONN_E  0x02
+#define CONN_S  0x04
+#define CONN_W  0x08
+
+struct Pose {
+    int8_t  x;
+    int8_t  y;
+    Heading heading;
+};
+
+struct Crossing {
+    int8_t  x;
+    int8_t  y;
+    uint8_t conn;       // 이 교차로에서 갈 수 있는 방향 비트마스크
+};
+
+struct CityCoord {
+    const char* uid;
+    int8_t x;
+    int8_t y;
+};
+
 class Controller {
 private:
     uint8_t RFIDReaderSlaveSelect = 2;
@@ -78,15 +107,8 @@ private:
     float Kp = 0.05;              // 비례 상수 (필요시 수정)
     float maxCorrection = 35.0;   // 급격한 꺾임 방지
 
+    // 시작용 RFID UID. 도시 UID 는 Controller.cpp 의 CITY_COORDS 테이블 참조.
     String s_strRFIDUidForStart = String("647AB573");
-    String s_strRFIDUidForSeoul = String("");
-    String s_strRFIDUidForIncheon = String("");
-    String s_strRFIDUidForSejong = String("");
-    String s_strRFIDUidForDaejeon = String("148EC573");
-    String s_strRFIDUidForDaegu = String("");
-    String s_strRFIDUidForGwangju = String("");
-    String s_strRFIDUidForChuncheon = String("");
-    String s_strRFIDUidForJeju = String("");
 
     MFRC522 mfrc522;
     Servo servo;
@@ -95,6 +117,9 @@ private:
 
     POSITION currentPosition = eInitialPosition;
     APP_STATE state = STATE_NONE;
+
+    // 현재 좌표/방향 (eInitialPosition 종료 시 init() 가 설정)
+    Pose currentPose = {1, 0, HD_NORTH};
 
 public:
     bool enableObstacleAvoidance = true;
@@ -142,6 +167,10 @@ public:
     // 💡 첫 번째 코드에서 가져온 정규화 함수 선언
     int normalizeLeft(int rawValue);
     int normalizeRight(int rawValue);
+
+    // 좌표 네비게이션
+    void navigateTo(int8_t tx, int8_t ty);
+    void rotateToHeading(Heading target);
 };
 
 #endif // CONTROLLER_H
