@@ -147,68 +147,81 @@ void Controller::ProcessRFIDRead()
             //   1) forward 경로  2) 도시 도착: 화물 내리고 180° 회전  3) return 경로
             // 블록 종료 후 공통으로: Stop → TurnHalf → LifterUp 으로 다음 화물 픽업 자세.
             if (strRFID.compareTo(s_strRFIDUidForSeoul) == 0) {
+                // ── 1) 도시 가기 (창고 → 서울) ──
                 delay(500);
                 DoLineTrace(7);
                 PivotTurnRight();
                 DoLineTrace(2);
                 PivotTurnLeft();
 
+                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
                 LifterDown();
                 Stop();
                 delay(700);
                 TurnHalf();
 
+                // ── 3) 물류창고로 복귀 (서울 → 창고) ──
                 delay(1000);
                 DoLineTrace(7);
                 PivotTurnRight();
                 DoLineTrace(2);
                 PivotTurnLeft();
             } else if (strRFID.compareTo(s_strRFIDUidForIncheon) == 0) {
+                // ── 1) 도시 가기 (창고 → 인천) ──
                 delay(500);
                 DoLineTrace(7);
                 PivotTurnRight();
                 DoLineTrace(1);
                 PivotTurnLeft();
 
+                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
                 LifterDown();
                 Stop();
                 delay(700);
                 TurnHalf();
 
+                // ── 3) 물류창고로 복귀 (인천 → 창고) ──
                 delay(1000);
                 DoLineTrace(7);
                 PivotTurnRight();
                 DoLineTrace(1);
                 PivotTurnLeft();
             } else if (strRFID.compareTo(s_strRFIDUidForSejong) == 0) {
+                // ── 1) 도시 가기 (창고 → 세종) ──
                 delay(500);
                 DoLineTrace(7);
 
+                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
                 LifterDown();
                 Stop();
                 delay(700);
                 TurnHalf();
 
+                // ── 3) 물류창고로 복귀 (세종 → 창고) ──
                 delay(1000);
                 DoLineTrace(7);
             } else if (strRFID.compareTo(s_strRFIDUidForDaejeon) == 0) {
+                // ── 1) 도시 가기 (창고 → 대전) ──
                 delay(500);
                 DoLineTrace(7);
                 PivotTurnLeft();
                 DoLineTrace(1);
                 PivotTurnRight();
 
+                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
                 LifterDown();
                 Stop();
                 delay(700);
                 TurnHalf();
 
+                // ── 3) 물류창고로 복귀 (대전 → 창고) ──
                 delay(700); // 대전 return은 기존부터 700ms (다른 도시는 1000ms)
                 DoLineTrace(7);
                 PivotTurnLeft();
                 DoLineTrace(1);
                 PivotTurnRight();
             } else if (strRFID.compareTo(s_strRFIDUidForDaegu) == 0) {
+                // ── 1) 도시 가기 (창고 → 대구) ──
                 delay(500);
                 DoLineTrace(8);
                 PivotTurnLeft();
@@ -216,11 +229,13 @@ void Controller::ProcessRFIDRead()
                 PivotTurnRight();
                 DoLineTrace(1);
 
+                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
                 LifterDown();
                 Stop();
                 delay(700);
                 TurnHalf();
 
+                // ── 3) 물류창고로 복귀 (대구 → 창고) ──
                 delay(1000);
                 DoLineTrace(8);
                 PivotTurnLeft();
@@ -228,17 +243,20 @@ void Controller::ProcessRFIDRead()
                 PivotTurnRight();
                 DoLineTrace(1);
             } else if (strRFID.compareTo(s_strRFIDUidForGwangju) == 0) {
+                // ── 1) 도시 가기 (창고 → 광주) ──
                 delay(500);
                 DoLineTrace(8);
                 PivotTurnLeft();
                 DoLineTrace(1);
                 PivotTurnRight();
 
+                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
                 LifterDown();
                 Stop();
                 delay(700);
                 TurnHalf();
 
+                // ── 3) 물류창고로 복귀 (광주 → 창고) ──
                 // 광주 return은 forward와 비대칭 (forward: PivotL/LT(1)/PivotR, return: PivotL/LT(2)/PivotR/LT(1))
                 delay(1000);
                 DoLineTrace(8);
@@ -247,6 +265,7 @@ void Controller::ProcessRFIDRead()
                 PivotTurnRight();
                 DoLineTrace(1);
             } else if (strRFID.compareTo(s_strRFIDUidForChuncheon) == 0) {
+                // ── 1) 도시 가기 (창고 → 춘천) ──
                 delay(500);
                 DoLineTrace(8);
                 PivotTurnLeft();
@@ -254,11 +273,13 @@ void Controller::ProcessRFIDRead()
                 PivotTurnRight();
                 DoLineTrace(1);
 
+                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
                 LifterDown();
                 Stop();
                 delay(700);
                 TurnHalf();
 
+                // ── 3) 물류창고로 복귀 (춘천 → 창고) ──
                 delay(1000);
                 DoLineTrace(8);
                 PivotTurnLeft();
@@ -266,6 +287,7 @@ void Controller::ProcessRFIDRead()
                 PivotTurnRight();
                 DoLineTrace(1);
             } else if (strRFID.compareTo(s_strRFIDUidForJeju) == 0) {
+                // ── 1) 도시 가기 (창고 → 제주) ──
                 delay(500);
                 DoLineTrace(8);
                 PivotTurnLeft();
@@ -273,11 +295,13 @@ void Controller::ProcessRFIDRead()
                 PivotTurnRight();
                 DoLineTrace(1);
 
+                // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
                 LifterDown();
                 Stop();
                 delay(700);
                 TurnHalf();
 
+                // ── 3) 물류창고로 복귀 (제주 → 창고) ──
                 delay(1000);
                 DoLineTrace(8);
                 PivotTurnLeft();
