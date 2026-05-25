@@ -470,13 +470,16 @@ void Controller::PivotTurnLeft()
 
     Move();
     delay(10);
+    // [1] 킥스타트: 정지 마찰 극복용 초기 부스트 (양쪽 동일 PWM, 50ms)
     analogWrite(LeftWheelPWM, (int)(170 * SPEED_SCALE));
     analogWrite(RightWheelPWM, (int)(170 * SPEED_SCALE));
     delay((unsigned long)(50 / SPEED_SCALE));
+    // [2] 회전 구간: 왼쪽 약, 오른쪽 강 → 좌회전 (시간으로 회전각 결정)
     analogWrite(LeftWheelPWM, (int)(90 * _motorCalibL * SPEED_SCALE));
     analogWrite(RightWheelPWM, (int)(180 * _motorCalibR * SPEED_SCALE));
     delay((unsigned long)((currentPosition == eWareHousePosition ? 140 : 110) / SPEED_SCALE));
 
+    // [3] 정지
     analogWrite(LeftWheelPWM, 0);
     analogWrite(RightWheelPWM, 0);
 
@@ -494,13 +497,16 @@ void Controller::PivotTurnRight()
 
     Move();
     delay(10);
+    // [1] 킥스타트: 정지 마찰 극복용 초기 부스트 (양쪽 동일 PWM, 50ms)
     analogWrite(LeftWheelPWM, (int)(170 * _motorCalibL * SPEED_SCALE));
     analogWrite(RightWheelPWM, (int)(170 * _motorCalibR * SPEED_SCALE));
     delay((unsigned long)(50 / SPEED_SCALE));
+    // [2] 회전 구간: 왼쪽 강, 오른쪽 약 → 우회전 (시간으로 회전각 결정)
     analogWrite(LeftWheelPWM, (int)(170 * _motorCalibL * SPEED_SCALE));
     analogWrite(RightWheelPWM, (int)(90 * _motorCalibR * SPEED_SCALE));
     delay((unsigned long)((currentPosition == eWareHousePosition ? 140 : 110) / SPEED_SCALE));
 
+    // [3] 정지
     analogWrite(LeftWheelPWM, 0);
     analogWrite(RightWheelPWM, 0);
     if (Serial) Serial.println("Leave Pivot turn Right");
