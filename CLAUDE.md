@@ -54,7 +54,13 @@ Adding a new city: just add a `CityCoord` mapping RFID UID → `(x, y)` in `CITY
 
 `navigateTo()` returns `bool` — `true` on reaching target, `false` on STUCK. The `eWareHousePosition` dispatch checks the return: on success, runs the drop-cargo + return-trip sequence normally; on failure, **skips `LifterDown`/`TurnHalf`** and just navigates back to `(1, 0)` with cargo still on the lifter. This avoids the previous bug where a failed forward trip silently triggered the "arrived at city" choreography in the middle of the map.
 
-**Obstacle bypass** (simplified): when `CheckObstacle()` trips during `DoLineTrace(1)`, the bot does `ReverseToPreviousNode()` + a single `PivotTurnLeft` or `PivotTurnRight` (controlled by `OBSTACLE_BYPASS_LEFT` in `Controller.h`), updates `currentPose.heading`, and returns `false`. The navigator records the blocked `(x, y, direction)` and re-runs `desiredHeading()` with that direction masked out of `conn`, so the next iteration picks an alternative. Block state clears on any successful move. **Layout requirement**: the blocked crossing must have at least one other valid direction toward the target, otherwise the navigator prints `"Nav STUCK"` and stops.
+**Obstacle bypass** has two modes selected by `_coordNavActive`:
+
+- **Coord mode** (`_coordNavActive=true`, active for all city trips after the init sequence): when `CheckObstacle()` trips during `DoLineTrace(1)`, the bot does `ReverseToPreviousNode()` and returns `false`. The navigator records the blocked `(x, y, direction)` and re-runs `desiredHeading()` with that direction masked out of `conn`, so the next iteration picks an alternative (perpendicular fallback if the target is on the same axis). Block clears on any successful move.
+
+- **Init-sequence mode** (`_coordNavActive=false`, only during the start-tag bring-up sequence at `eInitialPosition`): the navigator/pose isn't established yet, so `DoLineTrace()` performs an inline rectangular detour itself — reverse, sidestep left, advance, sidestep back — and decrements `targetCount` by 1 to compensate. Then the outer call continues as if the obstacle wasn't there. Same approach the codebase used before coordinate-based nav was introduced.
+
+`_coordNavActive` flips to `true` inside the `eInitialPosition` case right after `currentPose = {1, 0, HD_NORTH}`. **Layout requirement** (coord mode): the blocked crossing must have at least one other valid direction toward the target, otherwise the navigator prints `"Nav STUCK"` and stops.
 
 **Precise realign** (the reverse-then-forward dance in `LineTracer()`) only runs when arriving at `y == 0` (warehouse row) or `y == 7` (city row) — the rows where a clean turn matters. Intermediate crossings just count and pass through with a brief stop. Controlled by `_preciseRealign` member, set per call by the `precise` parameter of `DoLineTrace()`.
 

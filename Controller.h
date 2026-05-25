@@ -126,6 +126,7 @@ private:
     int8_t _blockedAtX = -128;              // 직전에 장애물로 막힌 좌표 (-128 = 없음)
     int8_t _blockedAtY = -128;
     uint8_t _blockedDirBit = 0;             // 막힌 방향의 CONN_* 비트
+    bool _coordNavActive = false;           // 좌표 네비 활성 여부. false 면 DoLineTrace 가 사각 우회 자체 처리.
 
 public:
     bool enableObstacleAvoidance = true;

@@ -164,15 +164,34 @@ bool Controller::DoLineTrace(uint16_t targetCount, bool precise)
         if (enableObstacleAvoidance && CheckObstacle()) {
             Stop();
             delay(500);
-            if (Serial) Serial.println("Obstacle! Backing to prev node.");
 
-            // 회전은 여기서 하지 않음 — 네비게이터가 다음 iter 에서 막힌 방향
-            // 마스킹 후 최적 방향 선택, rotateToHeading 으로 한 번에 회전.
-            // (여기서 무조건 90° 좌/우 회전하면 다음 회전과 중복돼 최대 270° 됨)
+            if (_coordNavActive) {
+                // 좌표 모드 — 후진만 하고 네비게이터에 위임
+                if (Serial) Serial.println("Obstacle (coord)! Backing to prev node.");
+                ReverseToPreviousNode();
+                ResetLineCounter();
+                return false;
+            }
+
+            // 비좌표 모드 (초기 시퀀스) — 사각 우회 자체 처리 후 카운트 보정해 계속
+            if (Serial) Serial.println("Obstacle (init)! Rectangular bypass.");
+            enableObstacleAvoidance = false;            // 재진입 방지
+            uint16_t savedCounter = nLineCounter;
+
             ReverseToPreviousNode();
+            PivotTurnLeft();
+            DoLineTrace(1, false);
+            PivotTurnRight();
+            DoLineTrace(2, false);
+            PivotTurnRight();
+            DoLineTrace(1, false);
+            PivotTurnLeft();
 
-            ResetLineCounter();
-            return false;
+            if (targetCount > 0) targetCount--;        // 우회 중 한 칸 더 갔으니 보정
+            nLineCounter = savedCounter;
+            _preciseRealign = precise;                 // 중첩 DoLineTrace 가 덮어쓴 값 복구
+            delay(300);
+            enableObstacleAvoidance = true;
         }
     }
     return true;
@@ -197,6 +216,7 @@ void Controller::ProcessRFIDRead()
             // 좌표계 초기화 — init 시퀀스 종료 직후 로봇이 창고에서 도시 방향(N)을 보고 있다고 선언.
             // 실제 물리적 heading 과 다르면 navigateTo 가 첫 호출 때 TurnHalf 로 자동 보정함.
             currentPose = {1, 0, HD_NORTH};
+            _coordNavActive = true;  // 이후 DoLineTrace 는 좌표 모드 우회 사용
             mfrc522.PCD_AntennaOn();
             break;
 
