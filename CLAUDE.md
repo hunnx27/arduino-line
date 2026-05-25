@@ -43,14 +43,16 @@ eInitialPosition ──(Start tag)──► eWareHousePosition ──(City tag, 
 
 ### Coordinate-based navigation
 
-A 4-column × 8-row grid (`col 0~3, row 0~7`) with the warehouse at `(1, 0)` and cities along `row 7`. Bot tracks `currentPose = {x, y, heading}` and at each crossing decides the next direction by:
+A 4-column × 8-row **full grid** (`col 0~3, row 0~7`, every cell connected to its 4 cardinal neighbors). Warehouse at `(1, 0)`, cities along `row 7`. Bot tracks `currentPose = {x, y, heading}` and at each crossing decides the next direction by:
 
 1. Compute `(dx, dy)` to target.
-2. Look up the current crossing's `conn` bitmask (`CONN_N|CONN_E|CONN_S|CONN_W`) in the `CROSSINGS[]` table.
-3. **Y-first greedy**: prefer N/S when `dy != 0` and that direction is in `conn`; otherwise fall back to E/W. This produces optimal paths for the current tree-shaped layout.
+2. Look up the current crossing's `conn` bitmask via `lookupConn(x, y)` — programmatic, returns N|E|S|W minus any grid-boundary directions (controlled by `GRID_COLS=4`, `GRID_ROWS=8`).
+3. **Y-first greedy**: prefer N/S when `dy != 0` and that direction is in `conn`; otherwise fall back to E/W.
 4. `rotateToHeading()` issues a `PivotTurn*`/`TurnHalf` if needed, then `DoLineTrace(1)` advances one crossing.
 
-Adding a new city: add a `Crossing` to `CROSSINGS[]` for its position (with appropriate `conn` bits), and a `CityCoord` mapping RFID UID → `(x, y)` in `CITY_COORDS[]`. **No path code to write** — the navigator finds the route. If the navigator gets stuck (no valid direction at a crossing), it stops and prints `"Nav STUCK at (x,y)"` — that means the `CROSSINGS[]` map is missing a connection there.
+Adding a new city: just add a `CityCoord` mapping RFID UID → `(x, y)` in `CITY_COORDS[]`. **No path code or map edit needed** — the navigator finds the route. If a future layout has a gap in the grid (some cell missing a particular direction), add an override inside `lookupConn()`. If the navigator hits a true dead-end (every direction blocked), it prints `"Nav STUCK at (x,y)"`, returns `false`, and the dispatch handles the failure (see next paragraph).
+
+`navigateTo()` returns `bool` — `true` on reaching target, `false` on STUCK. The `eWareHousePosition` dispatch checks the return: on success, runs the drop-cargo + return-trip sequence normally; on failure, **skips `LifterDown`/`TurnHalf`** and just navigates back to `(1, 0)` with cargo still on the lifter. This avoids the previous bug where a failed forward trip silently triggered the "arrived at city" choreography in the middle of the map.
 
 **Obstacle bypass** (simplified): when `CheckObstacle()` trips during `DoLineTrace(1)`, the bot does `ReverseToPreviousNode()` + a single `PivotTurnLeft` or `PivotTurnRight` (controlled by `OBSTACLE_BYPASS_LEFT` in `Controller.h`), updates `currentPose.heading`, and returns `false`. The navigator records the blocked `(x, y, direction)` and re-runs `desiredHeading()` with that direction masked out of `conn`, so the next iteration picks an alternative. Block state clears on any successful move. **Layout requirement**: the blocked crossing must have at least one other valid direction toward the target, otherwise the navigator prints `"Nav STUCK"` and stops.
 

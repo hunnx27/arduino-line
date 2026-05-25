@@ -180,8 +180,8 @@ public:
     int normalizeLeft(int rawValue);
     int normalizeRight(int rawValue);
 
-    // 좌표 네비게이션
-    void navigateTo(int8_t tx, int8_t ty);
+    // 좌표 네비게이션 — 목적지 도달 시 true, 막혀서 중단되면 false 반환
+    bool navigateTo(int8_t tx, int8_t ty);
     void rotateToHeading(Heading target);
 };
 

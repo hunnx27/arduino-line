@@ -1,24 +1,11 @@
 #include "Controller.h"
 
-// === 좌표 맵 (4열 × 8행 그리드) ===
-// 창고: (1, 0), 도시 행: y=7, 메인 라인: x=1
-// TODO: 실제 라인 레이아웃과 대조 후 보정 — 분기점 누락/추가 시 여기만 수정.
-static const Crossing CROSSINGS[] = {
-    // 메인 라인 (창고 → 도시 행, x=1)
-    {1, 0, CONN_N},                                  // 창고 (북쪽으로만)
-    {1, 1, CONN_N|CONN_S},
-    {1, 2, CONN_N|CONN_S},
-    {1, 3, CONN_N|CONN_S},
-    {1, 4, CONN_N|CONN_S},
-    {1, 5, CONN_N|CONN_S},
-    {1, 6, CONN_N|CONN_S},
-    // 도시 행 (y = 7) — 좌우로 연결
-    {0, 7, CONN_E},                                  // col 0 도시 (Daejeon)
-    {1, 7, CONN_S|CONN_E|CONN_W},                    // col 1 도시 (Sejong, 메인 라인 종점)
-    {2, 7, CONN_E|CONN_W},                           // col 2 도시 (Incheon)
-    {3, 7, CONN_W},                                  // col 3 도시 (Seoul)
-};
-static const uint8_t CROSSING_COUNT = sizeof(CROSSINGS) / sizeof(Crossing);
+// === 좌표 맵 (4열 × 8행 풀 그리드) ===
+// 창고: (1, 0), 도시 행: y=7. 모든 셀에 4방향(N/E/S/W) 라인이 있다고 가정 —
+// 가장자리 셀은 격자 밖 방향만 자동 제외. 장애물 우회 시 좌/우로 빠질 라인 보장.
+// 만약 layout 에 누락 구간이 생기면 lookupConn 안에서 예외 처리.
+#define GRID_COLS 4
+#define GRID_ROWS 8
 
 // === 도시 RFID UID → 좌표 매핑 ===
 // 빈 UID 는 RFID 미등록 (실제 태그 부착 후 채워 넣기)
@@ -41,10 +28,13 @@ static int8_t headingDy(Heading h) {
 }
 
 static uint8_t lookupConn(int8_t x, int8_t y) {
-    for (uint8_t i = 0; i < CROSSING_COUNT; i++) {
-        if (CROSSINGS[i].x == x && CROSSINGS[i].y == y) return CROSSINGS[i].conn;
-    }
-    return 0;
+    if (x < 0 || x >= GRID_COLS || y < 0 || y >= GRID_ROWS) return 0;
+    uint8_t conn = 0;
+    if (y + 1 < GRID_ROWS) conn |= CONN_N;
+    if (y - 1 >= 0)        conn |= CONN_S;
+    if (x + 1 < GRID_COLS) conn |= CONN_E;
+    if (x - 1 >= 0)        conn |= CONN_W;
+    return conn;
 }
 
 // Y(세로) 우선 → X(가로) 순. 메인 라인이 세로라 이 우선순위로 트리 구조 layout 에 항상 최적해.
@@ -216,24 +206,35 @@ void Controller::ProcessRFIDRead()
 
             // ── 1) 도시 가기 ──
             delay(500);
-            navigateTo(tx, ty);
+            bool reached = navigateTo(tx, ty);
 
-            // ── 2) 도착 후 행위 (화물 내리고 180° 회전) ──
-            LifterDown();
+            if (reached) {
+                // 정상 도착 — 화물 내리고 180° 회전
+                LifterDown();
+                Stop();
+                delay(700);
+                TurnHalf();
+                currentPose.heading = opposite(currentPose.heading);
+                delay(1000);
+            } else {
+                // 도시 도달 실패 (장애물로 우회 경로 없음) — 화물 들고 그대로 창고 복귀
+                if (Serial) Serial.println(F("Forward nav failed — returning to warehouse with cargo."));
+                Stop();
+                delay(500);
+            }
+
+            // ── 3) 물류창고로 복귀 (성공/실패 무관) ──
+            navigateTo(1, 0);
+
+            // 다음 화물 픽업 자세 (180° 회전)
             Stop();
-            delay(700);
             TurnHalf();
             currentPose.heading = opposite(currentPose.heading);
-
-            // ── 3) 물류창고로 복귀 ──
-            delay(1000);
-            navigateTo(1, 0);  // 창고 좌표
-
-            // 다음 화물 픽업 자세 (180° 회전하여 도시 방향으로 다시 face)
-            Stop();
-            TurnHalf();
-            currentPose.heading = opposite(currentPose.heading);
-            LifterUp();
+            if (reached) {
+                // 정상 흐름: 빈 손으로 복귀했으니 다시 LifterUp
+                LifterUp();
+            }
+            // 실패 흐름: 화물이 이미 위로 올라간 상태 그대로 (LifterUp 생략)
 
             mfrc522.PCD_AntennaOn();
             break;
@@ -567,7 +568,7 @@ void Controller::rotateToHeading(Heading target) {
     currentPose.heading = target;
 }
 
-void Controller::navigateTo(int8_t tx, int8_t ty) {
+bool Controller::navigateTo(int8_t tx, int8_t ty) {
     if (Serial) {
         Serial.print(F("Nav: ("));
         Serial.print(currentPose.x); Serial.print(F(","));
@@ -597,10 +598,10 @@ void Controller::navigateTo(int8_t tx, int8_t ty) {
                 Serial.print(currentPose.x); Serial.print(F(","));
                 Serial.print(currentPose.y); Serial.print(F(") target ("));
                 Serial.print(tx); Serial.print(F(",")); Serial.print(ty);
-                Serial.println(F(") — check CROSSINGS[] or layout"));
+                Serial.println(F(") — no alt path. Check CROSSINGS[] or expand layout."));
             }
             Stop();
-            return;
+            return false;
         }
 
         rotateToHeading(desired);
@@ -628,4 +629,5 @@ void Controller::navigateTo(int8_t tx, int8_t ty) {
             // pose 좌표는 그대로 — 다음 iteration 이 마스킹된 conn 으로 재계산
         }
     }
+    return true;
 }
