@@ -209,12 +209,12 @@ void Controller::ProcessRFIDRead()
             bool reached = navigateTo(tx, ty);
 
             if (reached) {
-                // 정상 도착 — 화물 내리고 180° 회전
+                // 정상 도착 — 화물 내리고 창고 방향(S) 으로 정렬.
+                // 도시 진입 heading 은 col 별로 N/E/W 다르지만 rotateToHeading 이 알아서 처리.
                 LifterDown();
                 Stop();
                 delay(700);
-                TurnHalf();
-                currentPose.heading = opposite(currentPose.heading);
+                rotateToHeading(HD_SOUTH);
                 delay(1000);
             } else {
                 // 도시 도달 실패 (장애물로 우회 경로 없음) — 화물 들고 그대로 창고 복귀
@@ -226,15 +226,14 @@ void Controller::ProcessRFIDRead()
             // ── 3) 물류창고로 복귀 (성공/실패 무관) ──
             navigateTo(1, 0);
 
-            // 다음 화물 픽업 자세 (180° 회전)
+            // 창고 도착 — 항상 도시 방향(N) 으로 정렬 (다음 RFID 태깅 대기 자세)
             Stop();
-            TurnHalf();
-            currentPose.heading = opposite(currentPose.heading);
+            rotateToHeading(HD_NORTH);
             if (reached) {
-                // 정상 흐름: 빈 손으로 복귀했으니 다시 LifterUp
+                // 정상 흐름: 빈 손으로 복귀했으니 다음 화물 픽업
                 LifterUp();
             }
-            // 실패 흐름: 화물이 이미 위로 올라간 상태 그대로 (LifterUp 생략)
+            // 실패 흐름: 화물이 위에 있는 상태 그대로 (LifterUp 생략)
 
             mfrc522.PCD_AntennaOn();
             break;
@@ -318,6 +317,7 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
                 int right = GetRight();
                 if (left > LINEDETECT_THRESHOLD_MIN && right > LINEDETECT_THRESHOLD_MIN) break;
             }
+            delay(300 - (300*SPEED_SCALE));
 
             Stop();
             delay(200); // 차체 안정화
