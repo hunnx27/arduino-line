@@ -43,7 +43,7 @@ eInitialPosition ──(Start tag)──► eWareHousePosition ──(City tag, 
 
 ### Coordinate-based navigation
 
-A 4-column × 8-row **full grid** (`col 0~3, row 0~7`, every cell connected to its 4 cardinal neighbors). Warehouse at `(1, 0)`, cities along `row 7`. Bot tracks `currentPose = {x, y, heading}` and at each crossing decides the next direction by:
+A 4-column × 8-row **full grid** (`col 0~3, row 0~7`, every cell connected to its 4 cardinal neighbors). Warehouse at `WAREHOUSE_X / WAREHOUSE_Y` (default `(3, 0)`), start RFID at `INIT_START_X / INIT_START_Y` (default `(0, 3)` heading `INIT_START_HEADING = HD_EAST`), cities along `row 7`. Bot tracks `currentPose = {x, y, heading}` and at each crossing decides the next direction by:
 
 1. Compute `(dx, dy)` to target.
 2. Look up the current crossing's `conn` bitmask via `lookupConn(x, y)` — programmatic, returns N|E|S|W minus any grid-boundary directions (controlled by `GRID_COLS=4`, `GRID_ROWS=8`).
@@ -54,13 +54,9 @@ Adding a new city: just add a `CityCoord` mapping RFID UID → `(x, y)` in `CITY
 
 `navigateTo()` returns `bool` — `true` on reaching target, `false` on STUCK. The `eWareHousePosition` dispatch checks the return: on success, runs the drop-cargo + return-trip sequence normally; on failure, **skips `LifterDown`/`TurnHalf`** and just navigates back to `(1, 0)` with cargo still on the lifter. This avoids the previous bug where a failed forward trip silently triggered the "arrived at city" choreography in the middle of the map.
 
-**Obstacle bypass** has two modes selected by `_coordNavActive`:
+**Obstacle bypass** (single unified mode): when `CheckObstacle()` trips during `DoLineTrace(1)`, the bot does `ReverseToPreviousNode()` and returns `false`. The navigator records the blocked `(x, y, direction)` and re-runs `desiredHeading()` with that direction masked out of `conn`, so the next iteration picks an alternative (perpendicular fallback if the target is on the same axis). Block clears on any successful move. Init sequence uses the same navigator (`navigateTo(WAREHOUSE_X, WAREHOUSE_Y)` from the start RFID position), so obstacles encountered during the bring-up trip are handled the same way.
 
-- **Coord mode** (`_coordNavActive=true`, active for all city trips after the init sequence): when `CheckObstacle()` trips during `DoLineTrace(1)`, the bot does `ReverseToPreviousNode()` and returns `false`. The navigator records the blocked `(x, y, direction)` and re-runs `desiredHeading()` with that direction masked out of `conn`, so the next iteration picks an alternative (perpendicular fallback if the target is on the same axis). Block clears on any successful move.
-
-- **Init-sequence mode** (`_coordNavActive=false`, only during the start-tag bring-up sequence at `eInitialPosition`): the navigator/pose isn't established yet, so `DoLineTrace()` performs an inline rectangular detour itself — reverse, sidestep left, advance, sidestep back — and decrements `targetCount` by 1 to compensate. Then the outer call continues as if the obstacle wasn't there. Same approach the codebase used before coordinate-based nav was introduced.
-
-`_coordNavActive` flips to `true` inside the `eInitialPosition` case right after `currentPose = {1, 0, HD_NORTH}`. **Layout requirement** (coord mode): the blocked crossing must have at least one other valid direction toward the target, otherwise the navigator prints `"Nav STUCK"` and stops.
+**Layout requirement**: the blocked crossing must have at least one other valid direction toward the target, otherwise the navigator prints `"Nav STUCK"` and stops.
 
 **Precise realign** (the reverse-then-forward dance in `LineTracer()`) only runs when arriving at `y == 0` (warehouse row) or `y == 7` (city row) — the rows where a clean turn matters. Intermediate crossings just count and pass through with a brief stop. Controlled by `_preciseRealign` member, set per call by the `precise` parameter of `DoLineTrace()`.
 

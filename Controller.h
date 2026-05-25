@@ -27,6 +27,16 @@
 // 권장 범위 0.5 ~ 1.0. 0.5 미만은 정지마찰을 못 이겨 모터가 안 돌 수 있음.
 #define SPEED_SCALE 0.6f
 
+// 시작 RFID 가 놓인 그리드 좌표 (col=x, row=y) + 부팅 직후 로봇 heading.
+// 사용자 prose: (row 3, col 0) heading 동쪽.
+#define INIT_START_X        0
+#define INIT_START_Y        3
+#define INIT_START_HEADING  HD_EAST
+
+// 창고 좌표 (col=x, row=y). 사용자 prose: (row 0, col 3).
+#define WAREHOUSE_X         3
+#define WAREHOUSE_Y         0
+
 enum POSITION {
     eInitialPosition = 0,
     eWareHousePosition,
@@ -118,15 +128,14 @@ private:
     POSITION currentPosition = eInitialPosition;
     APP_STATE state = STATE_NONE;
 
-    // 현재 좌표/방향 (eInitialPosition 종료 시 init() 가 설정)
-    Pose currentPose = {1, 0, HD_NORTH};
+    // 현재 좌표/방향. 부팅 직후엔 시작 RFID 위치에서 시작 (eInitialPosition 핸들러에서 재설정).
+    Pose currentPose = {INIT_START_X, INIT_START_Y, INIT_START_HEADING};
 
     // 네비게이션 보조 상태
     bool _preciseRealign = true;            // LineTracer 정렬 dance 수행 여부 (y=0/7 에서만 true)
     int8_t _blockedAtX = -128;              // 직전에 장애물로 막힌 좌표 (-128 = 없음)
     int8_t _blockedAtY = -128;
     uint8_t _blockedDirBit = 0;             // 막힌 방향의 CONN_* 비트
-    bool _coordNavActive = false;           // 좌표 네비 활성 여부. false 면 DoLineTrace 가 사각 우회 자체 처리.
 
 public:
     bool enableObstacleAvoidance = true;

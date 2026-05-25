@@ -164,34 +164,10 @@ bool Controller::DoLineTrace(uint16_t targetCount, bool precise)
         if (enableObstacleAvoidance && CheckObstacle()) {
             Stop();
             delay(500);
-
-            if (_coordNavActive) {
-                // 좌표 모드 — 후진만 하고 네비게이터에 위임
-                if (Serial) Serial.println("Obstacle (coord)! Backing to prev node.");
-                ReverseToPreviousNode();
-                ResetLineCounter();
-                return false;
-            }
-
-            // 비좌표 모드 (초기 시퀀스) — 사각 우회 자체 처리 후 카운트 보정해 계속
-            if (Serial) Serial.println("Obstacle (init)! Rectangular bypass.");
-            enableObstacleAvoidance = false;            // 재진입 방지
-            uint16_t savedCounter = nLineCounter;
-
+            if (Serial) Serial.println("Obstacle! Backing to prev node.");
             ReverseToPreviousNode();
-            PivotTurnLeft();
-            DoLineTrace(1, false);
-            PivotTurnRight();
-            DoLineTrace(2, false);
-            PivotTurnRight();
-            DoLineTrace(1, false);
-            PivotTurnLeft();
-
-            if (targetCount > 0) targetCount--;        // 우회 중 한 칸 더 갔으니 보정
-            nLineCounter = savedCounter;
-            _preciseRealign = precise;                 // 중첩 DoLineTrace 가 덮어쓴 값 복구
-            delay(300);
-            enableObstacleAvoidance = true;
+            ResetLineCounter();
+            return false;  // 네비게이터가 막힌 방향 기록 후 재계산
         }
     }
     return true;
@@ -205,18 +181,14 @@ void Controller::ProcessRFIDRead()
         switch (currentPosition) {
         case eInitialPosition:
             if (strRFID.compareTo(s_strRFIDUidForStart) == 0) {
-                DoLineTrace(3);
-                PivotTurnLeft();
-                DoLineTrace(3);
+                // 시작 RFID 위치에서 좌표계 시작 → 네비게이터로 창고까지 자동 이동.
+                // 장애물 우회도 동일 메커니즘으로 처리됨.
+                currentPose = {INIT_START_X, INIT_START_Y, INIT_START_HEADING};
+                navigateTo(WAREHOUSE_X, WAREHOUSE_Y);
+                rotateToHeading(HD_NORTH);  // 창고에서 도시 방향(+y) 으로 정렬
+                LifterUp();
+                currentPosition = eWareHousePosition;
             }
-            Stop();
-            TurnHalf();
-            LifterUp();
-            currentPosition = eWareHousePosition;
-            // 좌표계 초기화 — init 시퀀스 종료 직후 로봇이 창고에서 도시 방향(N)을 보고 있다고 선언.
-            // 실제 물리적 heading 과 다르면 navigateTo 가 첫 호출 때 TurnHalf 로 자동 보정함.
-            currentPose = {1, 0, HD_NORTH};
-            _coordNavActive = true;  // 이후 DoLineTrace 는 좌표 모드 우회 사용
             mfrc522.PCD_AntennaOn();
             break;
 
@@ -252,7 +224,7 @@ void Controller::ProcessRFIDRead()
             }
 
             // ── 3) 물류창고로 복귀 (성공/실패 무관) ──
-            navigateTo(1, 0);
+            navigateTo(WAREHOUSE_X, WAREHOUSE_Y);
 
             // 창고 도착 — 항상 도시 방향(N) 으로 정렬 (다음 RFID 태깅 대기 자세)
             Stop();
