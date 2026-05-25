@@ -47,7 +47,7 @@ A 4-column × 8-row **full grid** (`col 0~3, row 0~7`, every cell connected to i
 
 1. Compute `(dx, dy)` to target.
 2. Look up the current crossing's `conn` bitmask via `lookupConn(x, y)` — programmatic, returns N|E|S|W minus any grid-boundary directions (controlled by `GRID_COLS=4`, `GRID_ROWS=8`).
-3. **Y-first greedy**: prefer N/S when `dy != 0` and that direction is in `conn`; otherwise fall back to E/W.
+3. **Y-first greedy + perpendicular fallback**: prefer N/S when `dy != 0` and that direction is in `conn`; otherwise E/W if `dx != 0`. If the direct direction is masked (e.g., obstacle blocked it) **and the target lies straight along that axis (dx=0 or dy=0)**, fall back to whichever perpendicular direction (E/W or N/S) is available so the bot can detour and return to the target column/row later.
 4. `rotateToHeading()` issues a `PivotTurn*`/`TurnHalf` if needed, then `DoLineTrace(1)` advances one crossing.
 
 Adding a new city: just add a `CityCoord` mapping RFID UID → `(x, y)` in `CITY_COORDS[]`. **No path code or map edit needed** — the navigator finds the route. If a future layout has a gap in the grid (some cell missing a particular direction), add an override inside `lookupConn()`. If the navigator hits a true dead-end (every direction blocked), it prints `"Nav STUCK at (x,y)"`, returns `false`, and the dispatch handles the failure (see next paragraph).

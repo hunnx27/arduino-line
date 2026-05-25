@@ -11,9 +11,9 @@
 // 빈 UID 는 RFID 미등록 (실제 태그 부착 후 채워 넣기)
 static const CityCoord CITY_COORDS[] = {
     {"", 0, 7},  // Daejeon — 현재 유일한 활성 UID
-    {"",         1, 7},  // Sejong  — UID 미입력
+    {"148EC573",         1, 7},  // Sejong  — UID 미입력
     {"",         2, 7},  // Incheon — UID 미입력
-    {"148EC573",         3, 7},  // Seoul   — UID 미입력
+    {"",         3, 7},  // Seoul   — UID 미입력
 };
 static const uint8_t CITY_COORD_COUNT = sizeof(CITY_COORDS) / sizeof(CityCoord);
 
@@ -38,12 +38,25 @@ static uint8_t lookupConn(int8_t x, int8_t y) {
 }
 
 // Y(세로) 우선 → X(가로) 순. 메인 라인이 세로라 이 우선순위로 트리 구조 layout 에 항상 최적해.
+// 직접 방향 막힘 (마스킹 등) 시 perpendicular fallback — 장애물 우회용.
+// 예: 세종(1,7) 가다 (1,4) 막히면 dx=0 인데도 E/W 로 우회 시도.
 static Heading desiredHeading(int8_t dx, int8_t dy, uint8_t conn) {
+    // 1) 직접 방향 우선
     if (dy > 0 && (conn & CONN_N)) return HD_NORTH;
     if (dy < 0 && (conn & CONN_S)) return HD_SOUTH;
     if (dx > 0 && (conn & CONN_E)) return HD_EAST;
     if (dx < 0 && (conn & CONN_W)) return HD_WEST;
-    return (Heading)0xFF;  // 갈 곳 없음
+
+    // 2) Perpendicular fallback — 진행축이 막혔으면 옆으로 우회
+    if (dy != 0) {
+        if (conn & CONN_E) return HD_EAST;
+        if (conn & CONN_W) return HD_WEST;
+    } else if (dx != 0) {
+        if (conn & CONN_N) return HD_NORTH;
+        if (conn & CONN_S) return HD_SOUTH;
+    }
+
+    return (Heading)0xFF;  // 정말 갈 곳 없음
 }
 
 static bool lookupCityCoord(const String& uid, int8_t* outX, int8_t* outY) {
