@@ -28,8 +28,9 @@
 #define SPEED_SCALE 0.6f
 
 // 시작 RFID 가 놓인 그리드 좌표 (col=x, row=y) + 부팅 직후 로봇 heading.
-// 사용자 prose: (row 3, col 0) heading 동쪽.
-#define INIT_START_X        0
+// 시작 위치는 그리드 진입선 한 칸 뒤 (x = -1). 첫 forward 가 (0, 3) 으로 진입.
+// lookupConn 에 (-1, 3) → CONN_E 특수 케이스 정의되어 있음.
+#define INIT_START_X        -1
 #define INIT_START_Y        3
 #define INIT_START_HEADING  HD_EAST
 
