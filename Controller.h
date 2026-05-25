@@ -33,8 +33,9 @@
 #define INIT_START_Y        3
 #define INIT_START_HEADING  HD_EAST
 
-// 창고 좌표 (col=x, row=y). 사용자 prose: (row 0, col 3).
-#define WAREHOUSE_X         3
+// 창고 좌표 (col=x, row=y). PHYSICAL 창고가 row 0 의 어느 col 인지에 따라 조정.
+// 현재 (1, 0) — Sejong 이 창고 바로 위(N) 인 layout. 만약 창고가 col 3 이면 (3, 0) 으로.
+#define WAREHOUSE_X         1
 #define WAREHOUSE_Y         0
 
 enum POSITION {
