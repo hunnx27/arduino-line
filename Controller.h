@@ -28,14 +28,14 @@
 #define SPEED_SCALE 0.6f
 
 // 시작 RFID 가 놓인 그리드 좌표 (col=x, row=y) + 부팅 직후 로봇 heading.
-// 사용자 prose: (row 3, col 0) heading 동쪽.
+// 사용자 prose: (row 3, col 0) — 위쪽(row 0) 바라봄.
 #define INIT_START_X        0
 #define INIT_START_Y        3
-#define INIT_START_HEADING  HD_EAST
+#define INIT_START_HEADING  HD_NORTH
 
-// 창고 좌표 (col=x, row=y). PHYSICAL 창고가 row 0 의 어느 col 인지에 따라 조정.
-// 현재 (1, 0) — Sejong 이 창고 바로 위(N) 인 layout. 만약 창고가 col 3 이면 (3, 0) 으로.
-#define WAREHOUSE_X         1
+// 창고 좌표 (col=x, row=y). 메인 라인 = col 2 layout.
+// 사용자 prose: warehouse at (row 0, col 2) = 내 코드 (2, 0).
+#define WAREHOUSE_X         2
 #define WAREHOUSE_Y         0
 
 enum POSITION {
