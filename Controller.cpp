@@ -95,9 +95,38 @@ static Heading desiredHeading(int8_t dx, int8_t dy, uint8_t conn, Heading curren
     return (Heading)0xFF;
 }
 
+// === 런타임 동적 진입금지 셀 ===
+// IR 장애물 감지 시 그 칸을 여기에 추가 → 이후 모든 navigateTo 가 사전 우회(재돌진 방지).
+// 정적 BLOCKED_CELLS 와 달리 런타임에 채워지며 전원 OFF 전까지 유지(리부팅 시 초기화).
+#define MAX_DYN_BLOCKED 8
+static BlockedCell g_dynBlocked[MAX_DYN_BLOCKED];
+static uint8_t g_dynBlockedCount = 0;
+
+static void addDynBlockedCell(int8_t x, int8_t y) {
+    if (x < 0 || x >= GRID_COLS || y < 0 || y >= GRID_ROWS) return;  // 그리드 밖 무시
+    for (uint8_t i = 0; i < g_dynBlockedCount; i++) {
+        if (g_dynBlocked[i].x == x && g_dynBlocked[i].y == y) return;  // 이미 등록됨
+    }
+    if (g_dynBlockedCount >= MAX_DYN_BLOCKED) {
+        if (Serial) Serial.println(F("Dyn-block list full — cell not stored."));
+        return;  // 가득 차면 임시 마스킹(_blockedAt*)이 즉시 우회를 담당
+    }
+    g_dynBlocked[g_dynBlockedCount].x = x;
+    g_dynBlocked[g_dynBlockedCount].y = y;
+    g_dynBlockedCount++;
+    if (Serial) {
+        Serial.print(F("Dyn-blocked cell ("));
+        Serial.print(x); Serial.print(F(",")); Serial.print(y);
+        Serial.print(F(") count=")); Serial.println(g_dynBlockedCount);
+    }
+}
+
 static bool isBlockedCell(int8_t x, int8_t y) {
     for (uint8_t i = 0; i < BLOCKED_CELL_COUNT; i++) {
         if (BLOCKED_CELLS[i].x == x && BLOCKED_CELLS[i].y == y) return true;
+    }
+    for (uint8_t i = 0; i < g_dynBlockedCount; i++) {
+        if (g_dynBlocked[i].x == x && g_dynBlocked[i].y == y) return true;
     }
     return false;
 }
@@ -701,7 +730,13 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
             currentPose.x += headingDx(desired);
             currentPose.y += headingDy(desired);
         } else {
-            // 장애물로 중단 — 막힌 방향 기록 (heading은 DoLineTrace 안에서 이미 갱신됨)
+            // 장애물로 중단 — 진행하려던 앞 칸을 영구 차단 리스트에 추가.
+            // 이후 트립부터는 maskBlockedNeighbors 가 사전 우회하므로 재돌진/후진 반복이 사라진다.
+            addDynBlockedCell(currentPose.x + headingDx(desired),
+                              currentPose.y + headingDy(desired));
+
+            // 임시 마스킹도 기록 — 같은 navigateTo 루프 내 즉시 우회 + 동적 리스트가 가득 찼을 때의 안전망.
+            // (heading 은 rotateToHeading 에서 이미 desired 로 갱신됨)
             _blockedAtX = currentPose.x;
             _blockedAtY = currentPose.y;
             switch (desired) {
