@@ -17,7 +17,7 @@ arduino-cli upload  --fqbn arduino:avr:uno -p /dev/cu.usbmodemXXXX .
 arduino-cli monitor -p /dev/cu.usbmodemXXXX -c baudrate=9600
 ```
 
-The sketch folder name (`GoandBack_fix`) must match the `.ino` filename — do not rename one without the other.
+The sketch folder name (`NavigateObstacle`) must match the `.ino` filename — do not rename one without the other.
 
 Required Arduino libraries (install via Library Manager): **MFRC522**, **Servo**, plus the bundled **SPI** and **EEPROM**.
 
@@ -27,7 +27,7 @@ Required Arduino libraries (install via Library Manager): **MFRC522**, **Servo**
 
 Three files form a single state-machine-driven robot controller:
 
-- **`GoandBack_fix.ino`** — Arduino entry point. Instantiates one global `Controller ctrlr`, calls `ctrlr.init()` in `setup()`, and `ctrlr.RunOnce()` every `loop()` iteration. All logic lives in `Controller`.
+- **`NavigateObstacle.ino`** — Arduino entry point. Instantiates one global `Controller ctrlr`, calls `ctrlr.init()` in `setup()`, and `ctrlr.RunOnce()` every `loop()` iteration. All logic lives in `Controller`.
 - **`Controller.h`** — pin map, tunables (`SERVO_UP/DOWN`, `LINEDETECT_THRESHOLD_MIN`, `OBSTACLE_THRESHOLD`, `Power`, P-controller `Kp`/`maxCorrection`), the `POSITION` / `APP_STATE` enums, and the city-RFID UID strings.
 - **`Controller.cpp`** — full implementation.
 
