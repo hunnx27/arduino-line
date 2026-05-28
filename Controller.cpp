@@ -95,6 +95,114 @@ static Heading desiredHeading(int8_t dx, int8_t dy, uint8_t conn, Heading curren
     return (Heading)0xFF;
 }
 
+// === EEPROM 기반 NavLog ===
+// 데드엔드/우회 디버깅용 — 매 Eval, DeadEnd 진입, DynBlock 추가를 EEPROM 에 기록.
+// 부팅 시 init() 가 dump → clear 호출 → 시리얼에 직전 트립 흐름이 자동 출력.
+//
+// EEPROM 영역:
+//   [0, 199]   25 엔트리 × 8 바이트 (순환 버퍼)
+//   [200]      head (다음에 쓸 슬롯, 0~24)
+//   [201]      count (현재 저장된 엔트리 수, 0~25)
+//   [240, 255] 기존 캘리브 — 변경 없음
+#define NAVLOG_BASE       0
+#define NAVLOG_ENTRIES    25
+#define NAVLOG_ENTRY_SZ   8
+#define NAVLOG_HEAD_ADDR  (NAVLOG_BASE + NAVLOG_ENTRIES * NAVLOG_ENTRY_SZ)  // 200
+#define NAVLOG_COUNT_ADDR (NAVLOG_HEAD_ADDR + 1)                            // 201
+
+#define NAVLOG_TAG_EVAL     0x01
+#define NAVLOG_TAG_DEADEND  0x02
+#define NAVLOG_TAG_DYNBLOCK 0x03
+
+static void navlogPush(uint8_t tag,
+                       uint8_t b1, uint8_t b2, uint8_t b3,
+                       uint8_t b4, uint8_t b5, uint8_t b6, uint8_t b7) {
+    uint8_t head  = EEPROM.read(NAVLOG_HEAD_ADDR);
+    uint8_t count = EEPROM.read(NAVLOG_COUNT_ADDR);
+    if (head  >= NAVLOG_ENTRIES) head  = 0;   // 초기화 안 됨 (0xFF) → 처음부터
+    if (count >  NAVLOG_ENTRIES) count = 0;
+
+    uint16_t addr = NAVLOG_BASE + (uint16_t)head * NAVLOG_ENTRY_SZ;
+    EEPROM.update(addr,     tag);
+    EEPROM.update(addr + 1, b1);
+    EEPROM.update(addr + 2, b2);
+    EEPROM.update(addr + 3, b3);
+    EEPROM.update(addr + 4, b4);
+    EEPROM.update(addr + 5, b5);
+    EEPROM.update(addr + 6, b6);
+    EEPROM.update(addr + 7, b7);
+
+    head = (head + 1) % NAVLOG_ENTRIES;
+    if (count < NAVLOG_ENTRIES) count++;
+    EEPROM.update(NAVLOG_HEAD_ADDR, head);
+    EEPROM.update(NAVLOG_COUNT_ADDR, count);
+}
+
+static void navlogClear() {
+    EEPROM.update(NAVLOG_HEAD_ADDR, 0);
+    EEPROM.update(NAVLOG_COUNT_ADDR, 0);
+}
+
+static void navlogDump() {
+    if (!Serial) return;
+    uint8_t head  = EEPROM.read(NAVLOG_HEAD_ADDR);
+    uint8_t count = EEPROM.read(NAVLOG_COUNT_ADDR);
+    if (head >= NAVLOG_ENTRIES || count > NAVLOG_ENTRIES || count == 0) {
+        Serial.println(F("=== NavLog: empty ==="));
+        return;
+    }
+    Serial.print(F("=== NavLog dump: "));
+    Serial.print(count);
+    Serial.println(F(" entries (oldest → newest) ==="));
+
+    // 순환 버퍼 정렬: count<MAX 면 0..count-1, count==MAX 면 head..head-1
+    uint8_t startIdx = (count < NAVLOG_ENTRIES) ? 0 : head;
+    for (uint8_t i = 0; i < count; i++) {
+        uint8_t slot  = (startIdx + i) % NAVLOG_ENTRIES;
+        uint16_t addr = NAVLOG_BASE + (uint16_t)slot * NAVLOG_ENTRY_SZ;
+        uint8_t tag = EEPROM.read(addr);
+        int8_t  x   = (int8_t)EEPROM.read(addr + 1);
+        int8_t  y   = (int8_t)EEPROM.read(addr + 2);
+        uint8_t b3  = EEPROM.read(addr + 3);
+        uint8_t b4  = EEPROM.read(addr + 4);
+        uint8_t b5  = EEPROM.read(addr + 5);
+        uint8_t b6  = EEPROM.read(addr + 6);
+        uint8_t b7  = EEPROM.read(addr + 7);
+
+        Serial.print(F("[")); Serial.print(i); Serial.print(F("] "));
+        switch (tag) {
+            case NAVLOG_TAG_EVAL:
+                Serial.print(F("Eval ("));
+                Serial.print(x); Serial.print(F(","));
+                Serial.print(y); Serial.print(F(") hd="));
+                Serial.print(b3);
+                Serial.print(F(" conn0=0b")); Serial.print(b4, BIN);
+                Serial.print(F(" afterBlk=0b")); Serial.print(b5, BIN);
+                Serial.print(F(" fwd=0b")); Serial.print(b6, BIN);
+                Serial.print(F(" pathLen=")); Serial.println(b7);
+                break;
+            case NAVLOG_TAG_DEADEND:
+                Serial.print(F("DeadEnd ("));
+                Serial.print(x); Serial.print(F(","));
+                Serial.print(y); Serial.print(F(") hd="));
+                Serial.print(b3);
+                Serial.print(F(" pathLen=")); Serial.println(b7);
+                break;
+            case NAVLOG_TAG_DYNBLOCK:
+                Serial.print(F("DynBlock ("));
+                Serial.print(x); Serial.print(F(","));
+                Serial.print(y); Serial.print(F(") count="));
+                Serial.println(b7);
+                break;
+            default:
+                Serial.print(F("Unknown tag=0x"));
+                Serial.println(tag, HEX);
+                break;
+        }
+    }
+    Serial.println(F("=== NavLog end ==="));
+}
+
 // === 런타임 동적 진입금지 셀 ===
 // IR 장애물 감지 시 그 칸을 여기에 추가 → 이후 모든 navigateTo 가 사전 우회(재돌진 방지).
 // 정적 BLOCKED_CELLS 와 달리 런타임에 채워지며 전원 OFF 전까지 유지(리부팅 시 초기화).
@@ -119,6 +227,8 @@ static void addDynBlockedCell(int8_t x, int8_t y) {
         Serial.print(x); Serial.print(F(",")); Serial.print(y);
         Serial.print(F(") count=")); Serial.println(g_dynBlockedCount);
     }
+    navlogPush(NAVLOG_TAG_DYNBLOCK,
+               (uint8_t)x, (uint8_t)y, 0, 0, 0, 0, g_dynBlockedCount);
 }
 
 static bool isBlockedCell(int8_t x, int8_t y) {
@@ -137,6 +247,31 @@ static uint8_t maskBlockedNeighbors(int8_t x, int8_t y, uint8_t conn) {
     if ((conn & CONN_S) && isBlockedCell(x,     y + 1)) conn &= ~CONN_S;
     if ((conn & CONN_E) && isBlockedCell(x + 1, y    )) conn &= ~CONN_E;
     if ((conn & CONN_W) && isBlockedCell(x - 1, y    )) conn &= ~CONN_W;
+    return conn;
+}
+
+// === 사이클 방지: 방문 카운터 ===
+// 한 navigateTo 안에서 각 칸을 몇 번 거쳤는지 추적. VISIT_LIMIT 도달 시 그 칸 진입 차단.
+// maskCellsOnPath 를 직속 부모만 마스킹으로 완화한 뒤 사이클이 생길 때 끊는 안전망.
+// navigateTo 시작 시 reset, 매 pose 변경 시 increment.
+#define VISIT_LIMIT 2
+static uint8_t g_visit[GRID_COLS * GRID_ROWS];
+
+static void resetVisit() {
+    for (uint8_t i = 0; i < (uint8_t)(GRID_COLS * GRID_ROWS); i++) g_visit[i] = 0;
+}
+
+static void incrementVisit(int8_t x, int8_t y) {
+    if (x < 0 || x >= GRID_COLS || y < 0 || y >= GRID_ROWS) return;
+    uint8_t idx = (uint8_t)y * (uint8_t)GRID_COLS + (uint8_t)x;
+    if (g_visit[idx] < 255) g_visit[idx]++;
+}
+
+static uint8_t maskOverVisited(int8_t x, int8_t y, uint8_t conn) {
+    if ((conn & CONN_N) && (y - 1) >= 0          && g_visit[(uint8_t)(y - 1) * GRID_COLS + (uint8_t)x      ] >= VISIT_LIMIT) conn &= ~CONN_N;
+    if ((conn & CONN_S) && (y + 1) < GRID_ROWS   && g_visit[(uint8_t)(y + 1) * GRID_COLS + (uint8_t)x      ] >= VISIT_LIMIT) conn &= ~CONN_S;
+    if ((conn & CONN_E) && (x + 1) < GRID_COLS   && g_visit[(uint8_t)y       * GRID_COLS + (uint8_t)(x + 1)] >= VISIT_LIMIT) conn &= ~CONN_E;
+    if ((conn & CONN_W) && (x - 1) >= 0          && g_visit[(uint8_t)y       * GRID_COLS + (uint8_t)(x - 1)] >= VISIT_LIMIT) conn &= ~CONN_W;
     return conn;
 }
 
@@ -169,6 +304,9 @@ void Controller::init() {
     Serial.print(" rB="); Serial.print(_rightBlack);
     Serial.print(" lB="); Serial.println(_leftBlack);
 
+    // 직전 트립 NavLog 자동 출력 후 버퍼 초기화
+    navlogDump();
+    navlogClear();
 
     SPI.begin();
     mfrc522.PCD_Init();
@@ -211,11 +349,24 @@ int Controller::normalizeRight(int rawValue) {
 }
 
 bool Controller::CheckObstacle() {
-    Serial.print("sensor front center :");
-    Serial.println(analogRead(SensorFrontCenter));
-    if (analogRead(SensorFrontCenter) < OBSTACLE_THRESHOLD) {
+    int center = analogRead(SensorFrontCenter);
+    int left   = analogRead(SensorFrontLeft);
+    int right  = analogRead(SensorFrontRight);
+    Serial.print("sensor front C/L/R : ");
+    Serial.print(center); Serial.print(" / ");
+    Serial.print(left);   Serial.print(" / ");
+    Serial.println(right);
+
+    bool centerTrip = (center < OBSTACLE_THRESHOLD);
+    bool leftTrip   = (left   < OBSTACLE_THRESHOLD_SIDE);
+    bool rightTrip  = (right  < OBSTACLE_THRESHOLD_SIDE);
+
+    if (centerTrip || leftTrip || rightTrip) {
         delay(2);
-        if (analogRead(SensorFrontCenter) < OBSTACLE_THRESHOLD) {
+        bool centerTrip2 = (analogRead(SensorFrontCenter) < OBSTACLE_THRESHOLD);
+        bool leftTrip2   = (analogRead(SensorFrontLeft)   < OBSTACLE_THRESHOLD_SIDE);
+        bool rightTrip2  = (analogRead(SensorFrontRight)  < OBSTACLE_THRESHOLD_SIDE);
+        if (centerTrip2 || leftTrip2 || rightTrip2) {
             return true;
         }
     }
@@ -236,7 +387,7 @@ void Controller::ReverseToPreviousNode() {
     }
     Stop();
     delay(400);
-    
+
     drive(FORWARD, Power - 40, FORWARD, Power - 40);
     while (true) {
         int left = GetLeft();
@@ -665,17 +816,18 @@ void Controller::rotateToHeading(Heading target) {
     currentPose.heading = target;
 }
 
-// 경로 스택에 들어 있는 칸 방향을 conn 에서 제거.
-// 부모(스택 직전 칸) 자동 제외 + 사이클 방지(이미 지나온 칸으로 안 돌아감).
+// 직속 부모(스택 직전 칸) 방향만 conn 에서 제거.
+// 즉시 되돌아가는 것만 막고, 더 깊은 경로 칸 마스킹은 maskOverVisited 가 담당.
+// 우회 시 같은 칸을 한 번 더 지나갈 수 있어 짧은 우회 경로가 자연스럽게 선택됨.
+// (VISIT_LIMIT 회 초과 방문 시 그 칸은 자동 차단되어 무한 루프 방지)
 uint8_t Controller::maskCellsOnPath(int8_t x, int8_t y, uint8_t conn) {
-    for (uint8_t i = 0; i < _pathLen; i++) {
-        int8_t ddx = _pathX[i] - x;
-        int8_t ddy = _pathY[i] - y;
-        if      (ddy == -1 && ddx == 0) conn &= ~CONN_N;
-        else if (ddy == 1  && ddx == 0) conn &= ~CONN_S;
-        else if (ddx == 1  && ddy == 0) conn &= ~CONN_E;
-        else if (ddx == -1 && ddy == 0) conn &= ~CONN_W;
-    }
+    if (_pathLen < 2) return conn;
+    int8_t ddx = _pathX[_pathLen - 2] - x;
+    int8_t ddy = _pathY[_pathLen - 2] - y;
+    if      (ddy == -1 && ddx == 0) conn &= ~CONN_N;
+    else if (ddy == 1  && ddx == 0) conn &= ~CONN_S;
+    else if (ddx == 1  && ddy == 0) conn &= ~CONN_E;
+    else if (ddx == -1 && ddy == 0) conn &= ~CONN_W;
     return conn;
 }
 
@@ -704,13 +856,18 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
     _pathY[_pathLen] = currentPose.y;
     _pathLen++;
 
+    // 사이클 방지용 방문 카운터 초기화 + 시작 칸 카운트
+    resetVisit();
+    incrementVisit(currentPose.x, currentPose.y);
+
     while (currentPose.x != tx || currentPose.y != ty) {
         int8_t dx = tx - currentPose.x;
         int8_t dy = ty - currentPose.y;
 
-        // forward 후보: 격자연결 ∩ 차단셀 제외 ∩ 스택칸(부모+사이클) 제외
-        uint8_t conn = lookupConn(currentPose.x, currentPose.y);
-        conn = maskBlockedNeighbors(currentPose.x, currentPose.y, conn);
+        // forward 후보: 격자연결 ∩ 차단셀 제외 ∩ VISIT_LIMIT 초과 칸 제외 ∩ 직속 부모 제외
+        uint8_t conn0   = lookupConn(currentPose.x, currentPose.y);
+        uint8_t conn    = maskBlockedNeighbors(currentPose.x, currentPose.y, conn0);
+        conn            = maskOverVisited(currentPose.x, currentPose.y, conn);
         uint8_t fwdConn = maskCellsOnPath(currentPose.x, currentPose.y, conn);
 
         // 직전 장애물 임시 마스킹 (동적 리스트 가득 찼을 때의 안전망)
@@ -718,13 +875,36 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
             fwdConn &= ~_blockedDirBit;
         }
 
+        if (Serial) {
+            Serial.print(F("Eval ("));
+            Serial.print(currentPose.x); Serial.print(F(","));
+            Serial.print(currentPose.y); Serial.print(F(") hd="));
+            Serial.print((uint8_t)currentPose.heading);
+            Serial.print(F(" conn0=0b")); Serial.print(conn0, BIN);
+            Serial.print(F(" afterBlk=0b")); Serial.print(conn, BIN);
+            Serial.print(F(" fwd=0b")); Serial.print(fwdConn, BIN);
+            Serial.print(F(" pathLen=")); Serial.println(_pathLen);
+        }
+        navlogPush(NAVLOG_TAG_EVAL,
+                   (uint8_t)currentPose.x, (uint8_t)currentPose.y,
+                   (uint8_t)currentPose.heading,
+                   conn0, conn, fwdConn, _pathLen);
+
         if (fwdConn == 0) {
-            // === 막다른 길 — 부모로 백트래킹 ===
+            // === 막다른 길 — 부모 칸 방향으로 180° 회전 후 한 칸 전진해서 복귀 ===
+            // 한 칸 이동 후 바깥 루프가 새 칸에서 fwdConn 재평가 (봇의 새 heading 기준 정면 판단).
+            //   - 탈출구 있음 → desiredHeading 이 선택해서 진행
+            //   - 여전히 데드엔드 → 다음 iteration 에서 같은 패턴 반복
+            //   - 스택이 비거나 부모가 그리드 밖이면 STUCK
             if (Serial) {
                 Serial.print(F("Dead-end at ("));
                 Serial.print(currentPose.x); Serial.print(F(","));
-                Serial.print(currentPose.y); Serial.println(F(") — backtracking"));
+                Serial.print(currentPose.y); Serial.println(F(") — turn + step backtracking"));
             }
+            navlogPush(NAVLOG_TAG_DEADEND,
+                       (uint8_t)currentPose.x, (uint8_t)currentPose.y,
+                       (uint8_t)currentPose.heading,
+                       0, 0, 0, _pathLen);
 
             if (_pathLen <= 1) {
                 if (Serial) Serial.println(F("Nav STUCK: start cell is dead-end."));
@@ -734,13 +914,12 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
             int8_t px = _pathX[_pathLen - 2];
             int8_t py = _pathY[_pathLen - 2];
             if (px < 0) {
-                // 시작 RFID 패드(그리드 밖) 까지는 후진하지 않음 — 라인이 없을 수 있음.
                 if (Serial) Serial.println(F("Nav STUCK: parent is off-grid start pad."));
                 Stop();
                 return false;
             }
 
-            // 부모 방향 회전 후 한 칸 후진 라인트레이스
+            // 부모 방향 계산 후 회전 → 한 칸 전진
             int8_t bdx = px - currentPose.x;
             int8_t bdy = py - currentPose.y;
             Heading back;
@@ -762,6 +941,7 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
             _pathLen--;
             currentPose.x = px;
             currentPose.y = py;
+            incrementVisit(currentPose.x, currentPose.y);
             _blockedAtX = -128;
             continue;
         }
@@ -783,10 +963,11 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
         bool precise = (newY == 0 || newY == 7);
 
         if (DoLineTrace(1, precise)) {
-            // 성공 — pose 갱신, 새 칸 push, 임시 마스킹 해제
+            // 성공 — pose 갱신, 새 칸 push, 방문 카운트 증가, 임시 마스킹 해제
             _blockedAtX = -128;
             currentPose.x = newX;
             currentPose.y = newY;
+            incrementVisit(currentPose.x, currentPose.y);
             if (_pathLen < NAV_PATH_MAX) {
                 _pathX[_pathLen] = currentPose.x;
                 _pathY[_pathLen] = currentPose.y;

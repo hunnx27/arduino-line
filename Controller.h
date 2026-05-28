@@ -19,8 +19,11 @@
 #define FORWARD   0
 #define BACKWARD  1
 
-// 장애물 인식 기준 거리값
-#define OBSTACLE_THRESHOLD 500
+// 장애물 인식 기준 거리값 (analog read 가 이 값 미만이면 장애물 있음으로 판단)
+// 측면 센서는 진행 경로보다 옆을 보므로 보통 더 가깝게(=더 낮은 값) 트리거하도록
+// 별도 상수로 분리. 초기값은 중앙과 동일하게 두고 실측 후 튜닝.
+#define OBSTACLE_THRESHOLD       500
+#define OBSTACLE_THRESHOLD_SIDE  500
 
 // 전체 속도 스케일 (1.0 = 원래 속도, 낮을수록 느림)
 // PWM은 이 비율만큼 줄고, 각도/거리를 유지해야 하는 delay는 1/SPEED_SCALE 배로 늘어남.
