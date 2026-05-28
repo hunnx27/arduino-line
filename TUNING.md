@@ -297,7 +297,7 @@ void Controller::LineTrace() {
 본 스케치는 9600 baud Serial 로 다음을 출력합니다 — Arduino IDE Serial Monitor (또는 `arduino-cli monitor -c baudrate=9600`) 로 보세요.
 
 - [LineTrace()](Controller.cpp#L428) 가 200 ms 마다 좌/우 raw + 정규화 값:
-  ```
+  ```text
   L_raw=320 R_raw=423 | L_n=0 R_n=12
   ```
   raw 값으로 EEPROM 캘리브 일치 여부 확인. 정규화 값이 항상 0 또는 1000 으로 클램프되면 캘리브 뒤집힘 의심.
