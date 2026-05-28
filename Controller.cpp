@@ -95,6 +95,22 @@ static Heading desiredHeading(int8_t dx, int8_t dy, uint8_t conn, Heading curren
     return (Heading)0xFF;
 }
 
+static bool isBlockedCell(int8_t x, int8_t y) {
+    for (uint8_t i = 0; i < BLOCKED_CELL_COUNT; i++) {
+        if (BLOCKED_CELLS[i].x == x && BLOCKED_CELLS[i].y == y) return true;
+    }
+    return false;
+}
+
+// 진입 금지 교차점에 해당하는 방향 비트를 conn 에서 제거.
+static uint8_t maskBlockedNeighbors(int8_t x, int8_t y, uint8_t conn) {
+    if ((conn & CONN_N) && isBlockedCell(x,     y - 1)) conn &= ~CONN_N;
+    if ((conn & CONN_S) && isBlockedCell(x,     y + 1)) conn &= ~CONN_S;
+    if ((conn & CONN_E) && isBlockedCell(x + 1, y    )) conn &= ~CONN_E;
+    if ((conn & CONN_W) && isBlockedCell(x - 1, y    )) conn &= ~CONN_W;
+    return conn;
+}
+
 static bool lookupCityCoord(const String& uid, int8_t* outX, int8_t* outY) {
     for (uint8_t i = 0; i < CITY_COORD_COUNT; i++) {
         if (CITY_COORDS[i].uid[0] == '\0') continue;  // 미등록 UID skip
@@ -191,6 +207,17 @@ void Controller::ReverseToPreviousNode() {
     }
     Stop();
     delay(400);
+    
+    drive(FORWARD, Power - 40, FORWARD, Power - 40);
+    while (true) {
+        int left = GetLeft();
+        int right = GetRight();
+        if (left > LINEDETECT_THRESHOLD_MIN && right > LINEDETECT_THRESHOLD_MIN) break;
+    }
+    delay(300 - (300*SPEED_SCALE));
+
+    Stop();
+    delay(200); // 차체 안정화
 }
 
 bool Controller::DoLineTrace(uint16_t targetCount, bool precise)
@@ -621,11 +648,26 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
     _blockedAtX = -128;
     _blockedAtY = -128;
     _blockedDirBit = 0;
+    _prevX = -128;
+    _prevY = -128;
 
     while (currentPose.x != tx || currentPose.y != ty) {
         int8_t  dx   = tx - currentPose.x;
         int8_t  dy   = ty - currentPose.y;
         uint8_t conn = lookupConn(currentPose.x, currentPose.y);
+
+        // 진입 금지 교차점 마스킹 (장애물 우회 중에도 매번 재확인)
+        conn = maskBlockedNeighbors(currentPose.x, currentPose.y, conn);
+
+        // 직전 셀로 돌아가는 방향 마스킹 (oscillation 방지)
+        if (_prevX != -128) {
+            int8_t pdx = _prevX - currentPose.x;
+            int8_t pdy = _prevY - currentPose.y;
+            if (pdy == -1)      conn &= ~CONN_N;
+            else if (pdy == 1)  conn &= ~CONN_S;
+            else if (pdx == 1)  conn &= ~CONN_E;
+            else if (pdx == -1) conn &= ~CONN_W;
+        }
 
         // 직전 시도에서 막힌 방향은 일시 마스킹
         if (_blockedAtX == currentPose.x && _blockedAtY == currentPose.y) {
@@ -652,8 +694,10 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
         bool precise = (newY == 0 || newY == 7);
 
         if (DoLineTrace(1, precise)) {
-            // 성공 — 차단 해제 + pose 갱신
+            // 성공 — 차단 해제 + prev 갱신 + pose 갱신
             _blockedAtX = -128;
+            _prevX = currentPose.x;
+            _prevY = currentPose.y;
             currentPose.x += headingDx(desired);
             currentPose.y += headingDy(desired);
         } else {

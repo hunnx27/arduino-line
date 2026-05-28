@@ -85,6 +85,20 @@ struct CityCoord {
     int8_t y;
 };
 
+struct BlockedCell {
+    int8_t x;
+    int8_t y;
+};
+
+// 진입 금지 교차점. navigateTo() 가 진입 직전에 그 방향을 마스킹해 우회한다.
+// 장애물 회피(런타임 감지)와 달리 사전 정의된 정적 차단이라 후진 없이 perpendicular fallback 으로 빠진다.
+// 추가 예: { {2, 3}, {3, 5} }
+static const BlockedCell BLOCKED_CELLS[] = {
+    // 진입 금지 셀을 여기에 추가. 아래는 빈 배열 회피용 sentinel — 그리드 밖이라 매칭되지 않음.
+    {2, 3}, {3,5}
+};
+static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(BlockedCell);
+
 class Controller {
 private:
     uint8_t RFIDReaderSlaveSelect = 2;
@@ -138,6 +152,8 @@ private:
     int8_t _blockedAtX = -128;              // 직전에 장애물로 막힌 좌표 (-128 = 없음)
     int8_t _blockedAtY = -128;
     uint8_t _blockedDirBit = 0;             // 막힌 방향의 CONN_* 비트
+    int8_t _prevX = -128;                   // 직전 셀 좌표 (oscillation 방지용, -128 = 없음)
+    int8_t _prevY = -128;
 
 public:
     bool enableObstacleAvoidance = true;
