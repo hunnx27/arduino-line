@@ -152,8 +152,15 @@ private:
     int8_t _blockedAtX = -128;              // 직전에 장애물로 막힌 좌표 (-128 = 없음)
     int8_t _blockedAtY = -128;
     uint8_t _blockedDirBit = 0;             // 막힌 방향의 CONN_* 비트
-    int8_t _prevX = -128;                   // 직전 셀 좌표 (oscillation 방지용, -128 = 없음)
-    int8_t _prevY = -128;
+
+    // DFS 백트래킹용 경로 스택. navigateTo 시작 시 currentPose 를 push 하고,
+    // 한 칸 전진할 때마다 push, 막다른 길에서 pop 하며 부모 칸으로 물리 후진.
+    // 동시에 사이클 방지 — 이미 스택에 있는 칸 방향은 forward 후보에서 제외.
+    // 4×8 그리드 단순 경로 최대 32 + 그리드 밖 시작 1 = 33. 여유로 34.
+    static const uint8_t NAV_PATH_MAX = 34;
+    int8_t _pathX[NAV_PATH_MAX];
+    int8_t _pathY[NAV_PATH_MAX];
+    uint8_t _pathLen = 0;
 
 public:
     bool enableObstacleAvoidance = true;
@@ -207,6 +214,9 @@ public:
     // 좌표 네비게이션 — 목적지 도달 시 true, 막혀서 중단되면 false 반환
     bool navigateTo(int8_t tx, int8_t ty);
     void rotateToHeading(Heading target);
+
+    // 스택에 있는 칸으로 향하는 방향 비트를 conn 에서 제거 (사이클 방지 + 부모 자동 제외).
+    uint8_t maskCellsOnPath(int8_t x, int8_t y, uint8_t conn);
 };
 
 #endif // CONTROLLER_H
