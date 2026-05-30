@@ -4,8 +4,7 @@
 // 창고: (2, 0), 도시 행: y=7. 모든 셀에 4방향(N/E/S/W) 라인이 있다고 가정 —
 // 가장자리 셀은 격자 밖 방향만 자동 제외. 장애물 우회 시 좌/우로 빠질 라인 보장.
 // 만약 layout 에 누락 구간이 생기면 lookupConn 안에서 예외 처리.
-#define GRID_COLS 4
-#define GRID_ROWS 8
+// GRID_COLS, GRID_ROWS, CITY_COORDS, BLOCKED_CELLS, INIT_* 등은 Settings.h 참조.
 
 //        x=0         x=1           x=2           x=3
 //        ┌──────┐    ┌──────┐      ┌──────────┐  ┌──────┐
@@ -16,28 +15,18 @@
 //           │           │                │            │
 //  y=2     (0,2)───────(1,2)────────────(2,2)────────(3,2)
 //           │           │                │            │
-// ◉(-1,3)─(0,3)───────(1,3)────────────(2,3)────────(3,3)   ◉ 시작 RFID — y=3, 그리드 한 칸 뒤. heading=EAST.
-//           │           │                │            │
+// ◉(-1,3)─(0,3)───────(1,3)────────────╳(2,3)╳──────(3,3)   ◉ 시작 RFID — y=3, 그리드 한 칸 뒤. heading=EAST
+//           │           │              ✕ STATIC          │
 //  y=4     (0,4)───────(1,4)────────────(2,4)────────(3,4)
 //           │           │                │            │
-//  y=5     (0,5)───────(1,5)────────────(2,5)────────(3,5)
-//           │           │                │            │
-//  y=6     (0,6)───────(1,6)────────────(2,6)────────(3,6)
+//  y=5     (0,5)─────╳(1,5)╳───────────(2,5)──────╳(3,5)╳
+//           │       ✕ STATIC              │       ✕ STATIC
+//  y=6     (0,6)───────(1,6)────────────(2,6)─────────(3,6)
 //           │           │                │            │
 //  y=7   ┌──┴───┐    ┌──┴───┐      ┌────┴─────┐  ┌──┴───┐
-//        │Seoul │────│Inchn │──────│Sejong ★ │──│Daejn │   ← 도시 라인
+//        │Seoul │────│Inchn │──────│Sejong ★ │──│Daejn │   ← 도시 라인 (CITY_COORDS in Settings.h)
 //        │ (0,7)│    │ (1,7)│      │ (2,7)    │  │ (3,7)│
-//        │ UID? │    │ UID? │      │ 148EC573 │  │ UID? │
 //        └──────┘    └──────┘      └──────────┘  └──────┘
-// === 도시 RFID UID → 좌표 매핑 ===
-// 빈 UID 는 RFID 미등록 (실제 태그 부착 후 채워 넣기)
-static const CityCoord CITY_COORDS[] = {
-    {"",         0, 7},  // Seoul    (col 0)
-    {"",         1, 7},  // Incheon  (col 1)
-    {"", 2, 7},  // Sejong   (col 2 = 메인 라인. 창고 바로 아래, 현재 유일한 활성 UID)
-    {"148EC573",         3, 7},  // Daejeon  (col 3)
-};
-static const uint8_t CITY_COORD_COUNT = sizeof(CITY_COORDS) / sizeof(CityCoord);
 
 // === 네비게이션 헬퍼 ===
 static Heading opposite(Heading h) { return (Heading)((h + 2) % 4); }
@@ -99,16 +88,15 @@ static Heading desiredHeading(int8_t dx, int8_t dy, uint8_t conn, Heading curren
 // 데드엔드/우회 디버깅용 — 매 Eval, DeadEnd 진입, DynBlock 추가를 EEPROM 에 기록.
 // 부팅 시 init() 가 dump → clear 호출 → 시리얼에 직전 트립 흐름이 자동 출력.
 //
-// EEPROM 영역:
-//   [0, 199]   25 엔트리 × 8 바이트 (순환 버퍼)
-//   [200]      head (다음에 쓸 슬롯, 0~24)
-//   [201]      count (현재 저장된 엔트리 수, 0~25)
-//   [240, 255] 기존 캘리브 — 변경 없음
+// EEPROM 영역 (Settings.h 에서 NAVLOG_ENTRIES 만 튜닝):
+//   [0, ENTRIES*8 - 1]   엔트리 데이터 (순환 버퍼)
+//   [ENTRIES*8]          head (다음에 쓸 슬롯)
+//   [ENTRIES*8 + 1]      count (현재 저장된 엔트리 수)
+//   [240, 255]           기존 캘리브 — 변경 없음
 #define NAVLOG_BASE       0
-#define NAVLOG_ENTRIES    25
 #define NAVLOG_ENTRY_SZ   8
-#define NAVLOG_HEAD_ADDR  (NAVLOG_BASE + NAVLOG_ENTRIES * NAVLOG_ENTRY_SZ)  // 200
-#define NAVLOG_COUNT_ADDR (NAVLOG_HEAD_ADDR + 1)                            // 201
+#define NAVLOG_HEAD_ADDR  (NAVLOG_BASE + NAVLOG_ENTRIES * NAVLOG_ENTRY_SZ)
+#define NAVLOG_COUNT_ADDR (NAVLOG_HEAD_ADDR + 1)
 
 #define NAVLOG_TAG_EVAL     0x01
 #define NAVLOG_TAG_DEADEND  0x02
@@ -206,7 +194,7 @@ static void navlogDump() {
 // === 런타임 동적 진입금지 셀 ===
 // IR 장애물 감지 시 그 칸을 여기에 추가 → 이후 모든 navigateTo 가 사전 우회(재돌진 방지).
 // 정적 BLOCKED_CELLS 와 달리 런타임에 채워지며 전원 OFF 전까지 유지(리부팅 시 초기화).
-#define MAX_DYN_BLOCKED 8
+// 최대 저장 개수는 Settings.h 의 MAX_DYN_BLOCKED.
 static BlockedCell g_dynBlocked[MAX_DYN_BLOCKED];
 static uint8_t g_dynBlockedCount = 0;
 
@@ -254,7 +242,7 @@ static uint8_t maskBlockedNeighbors(int8_t x, int8_t y, uint8_t conn) {
 // 한 navigateTo 안에서 각 칸을 몇 번 거쳤는지 추적. VISIT_LIMIT 도달 시 그 칸 진입 차단.
 // maskCellsOnPath 를 직속 부모만 마스킹으로 완화한 뒤 사이클이 생길 때 끊는 안전망.
 // navigateTo 시작 시 reset, 매 pose 변경 시 increment.
-#define VISIT_LIMIT 2
+// VISIT_LIMIT 은 Settings.h 에서 튜닝.
 static uint8_t g_visit[GRID_COLS * GRID_ROWS];
 
 static void resetVisit() {
@@ -403,6 +391,7 @@ void Controller::ReverseToPreviousNode() {
 bool Controller::DoLineTrace(uint16_t targetCount, bool precise)
 {
     _preciseRealign = precise;  // LineTracer 가 도달 시점에 읽음
+    _lastCrossingTime = millis();   // 사전 감속 타이머 시작 — 직전 교차로 시점 기준
     while (!LineTracer(targetCount)) {
         if (enableObstacleAvoidance && CheckObstacle()) {
             Stop();
@@ -548,7 +537,7 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
             // forward overshoot ∝ v² ∝ PWM² ∝ SPEED_SCALE² 이므로 후진 거리도 SPEED_SCALE² 만큼 줄임.
             // drive() PWM × SPEED_SCALE  +  delay × SPEED_SCALE  =  거리 × SPEED_SCALE².
             drive(BACKWARD, Power, BACKWARD, Power);
-            delay(400 * SPEED_SCALE);
+            delay(400 * 0.6f);
 
             Stop();
             delay(100); // 기어 방향 전환 전 잠깐 대기
@@ -559,7 +548,7 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
                 int right = GetRight();
                 if (left > LINEDETECT_THRESHOLD_MIN && right > LINEDETECT_THRESHOLD_MIN) break;
             }
-            delay(300 - (300*SPEED_SCALE));
+            delay(300 - (300*0.6f));
 
             Stop();
             delay(200); // 차체 안정화
@@ -600,27 +589,41 @@ void Controller::LineTrace() {
                 Serial.println(String("LINE!!! :") + String(nLineCounter));
             }
             bSignalHigh = 1;
+            _prevError = 0;             // 교차로 진입 — D 항 spike 방지
+            _lastCrossingTime = millis(); // 사전 감속 타이머 리셋 — 다음 교차로 기준
         }
-
-        Forward(Power);
+        Forward(CrossingPassPower);   // 교차로 통과 시 감속 — overshoot 방지
         delay((unsigned long)(50 / SPEED_SCALE)); // 🌟 선을 완전히 넘어가도록 약간의 전진 딜레이 유지 (그래야 후진할 때 선을 확실히 찾습니다)
     }
     else {
         if (bSignalHigh) {
             bSignalHigh = 0;
+            _prevError = 0;   // 교차로 이탈 — D 항 spike 방지
         }
 
-        // 부드러운 P-제어
+        // 부드러운 PD-제어
         int leftNorm = normalizeLeft(leftRaw);
         int rightNorm = normalizeRight(rightRaw);
 
         int error = rightNorm - leftNorm;
-        float correction = Kp * error;
+        int dError = error - _prevError;
+        float correction = Kp * error + Kd * dError;
+        _prevError = error;
 
         if (correction > maxCorrection) correction = maxCorrection;
         if (correction < -maxCorrection) correction = -maxCorrection;
 
-        int basePower = (currentPosition == eWareHousePosition) ? Power - 20 : Power;
+        // 사전 감속: 직전 교차로 후 일정 시간 지나면 base PWM 을 낮춤.
+        // 화물 적재(eWareHousePosition) 는 느리므로 임계값/감속 PWM 따로 (Settings.h).
+        bool cargo = (currentPosition == eWareHousePosition);
+        unsigned long approachThreshold = cargo ? CrossingApproachMsCargo : CrossingApproachMs;
+        bool inApproach = (millis() - _lastCrossingTime) > approachThreshold;
+        int basePower;
+        if (inApproach) {
+            basePower = cargo ? CROSSING_APPROACH_POWER_CARGO : CrossingApproachPower;
+        } else {
+            basePower = cargo ? MOTOR_POWER_CARGO : Power;
+        }
 
         float leftPower = basePower + correction;
         float rightPower = basePower - correction;
@@ -694,10 +697,14 @@ void Controller::Stop()
 }
 
 void Controller::TurnHalf() {
+    bool cargo = (currentPosition == eWareHousePosition);
     drive(BACKWARD, 80, FORWARD, 80);
-    delay((unsigned long)(50 / SPEED_SCALE));
-    drive(BACKWARD, 170, FORWARD, 170);
-    delay((unsigned long)(450 / SPEED_SCALE));
+    delay((unsigned long)(50));
+    // 화물 적재 시 각속도 ↓ (원심력으로 팔레트 슬라이드 방지). 각도 유지 위해 delay 살짝 ↑.
+    int turnPwm                = cargo ? TURNHALF_PWM_CARGO      : TURNHALF_PWM;
+    unsigned long turnDelay    = cargo ? TURNHALF_DELAY_MS_CARGO : TURNHALF_DELAY_MS;
+    drive(BACKWARD, turnPwm, FORWARD, turnPwm);
+    delay(turnDelay);
     Stop();
 }
 
@@ -712,14 +719,19 @@ void Controller::PivotTurnLeft()
 
     Move();
     delay(10);
-    // [1] 킥스타트: 정지 마찰 극복용 초기 부스트 (양쪽 동일 PWM, motorCalib 적용, 50ms)
-    analogWrite(LeftWheelPWM, (int)(170 * _motorCalibL * SPEED_SCALE));
-    analogWrite(RightWheelPWM, (int)(170 * _motorCalibR * SPEED_SCALE));
-    delay((unsigned long)(50 / SPEED_SCALE));
-    // [2] 회전 구간: 왼쪽 약, 오른쪽 강 → 좌회전 (시간으로 회전각 결정)
-    analogWrite(LeftWheelPWM, (int)(90 * _motorCalibL * SPEED_SCALE));
-    analogWrite(RightWheelPWM, (int)(180 * _motorCalibR * SPEED_SCALE));
-    delay((unsigned long)((currentPosition == eWareHousePosition ? 140 : 110) / SPEED_SCALE));
+    bool cargo = (currentPosition == eWareHousePosition);
+    // [1] 킥스타트: 정지 마찰 극복용 초기 부스트 (양쪽 동일 PWM, motorCalib 적용).
+    analogWrite(LeftWheelPWM,  (int)(PIVOT_KICK_PWM * _motorCalibL * SPEED_SCALE));
+    analogWrite(RightWheelPWM, (int)(PIVOT_KICK_PWM * _motorCalibR * SPEED_SCALE));
+    delay((unsigned long)(PIVOT_KICK_MS / SPEED_SCALE));
+    // [2] 회전 구간: 왼쪽 약, 오른쪽 강 → 좌회전 (시간으로 회전각 결정).
+    // 화물 적재 시 PWM ↓ + delay ↑ (팔레트 슬라이드 방지).
+    int strongPwm           = cargo ? PIVOT_LEFT_STRONG_PWM_CARGO : PIVOT_LEFT_STRONG_PWM;
+    int weakPwm             = cargo ? PIVOT_LEFT_WEAK_PWM_CARGO   : PIVOT_LEFT_WEAK_PWM;
+    unsigned long turnDelay = cargo ? PIVOT_DELAY_MS_CARGO        : PIVOT_DELAY_MS;
+    analogWrite(LeftWheelPWM,  (int)(weakPwm   * _motorCalibL * SPEED_SCALE));
+    analogWrite(RightWheelPWM, (int)(strongPwm * _motorCalibR * SPEED_SCALE));
+    delay(turnDelay);
 
     // [3] 정지
     analogWrite(LeftWheelPWM, 0);
@@ -739,14 +751,19 @@ void Controller::PivotTurnRight()
 
     Move();
     delay(10);
-    // [1] 킥스타트: 정지 마찰 극복용 초기 부스트 (양쪽 동일 PWM, 50ms)
-    analogWrite(LeftWheelPWM, (int)(170 * _motorCalibL * SPEED_SCALE));
-    analogWrite(RightWheelPWM, (int)(170 * _motorCalibR * SPEED_SCALE));
-    delay((unsigned long)(50 / SPEED_SCALE));
-    // [2] 회전 구간: 왼쪽 강, 오른쪽 약 → 우회전 (시간으로 회전각 결정)
-    analogWrite(LeftWheelPWM, (int)(170 * _motorCalibL * SPEED_SCALE));
-    analogWrite(RightWheelPWM, (int)(90 * _motorCalibR * SPEED_SCALE));
-    delay((unsigned long)((currentPosition == eWareHousePosition ? 140 : 110) / SPEED_SCALE));
+    bool cargo = (currentPosition == eWareHousePosition);
+    // [1] 킥스타트: 정지 마찰 극복용 초기 부스트 (양쪽 동일 PWM).
+    analogWrite(LeftWheelPWM,  (int)(PIVOT_KICK_PWM * _motorCalibL * SPEED_SCALE));
+    analogWrite(RightWheelPWM, (int)(PIVOT_KICK_PWM * _motorCalibR * SPEED_SCALE));
+    delay((unsigned long)(PIVOT_KICK_MS / SPEED_SCALE));
+    // [2] 회전 구간: 왼쪽 강, 오른쪽 약 → 우회전 (시간으로 회전각 결정).
+    // 화물 적재 시 PWM ↓ + delay ↑ (팔레트 슬라이드 방지).
+    int strongPwm           = cargo ? PIVOT_RIGHT_STRONG_PWM_CARGO : PIVOT_RIGHT_STRONG_PWM;
+    int weakPwm             = cargo ? PIVOT_RIGHT_WEAK_PWM_CARGO   : PIVOT_RIGHT_WEAK_PWM;
+    unsigned long turnDelay = cargo ? PIVOT_DELAY_MS_CARGO         : PIVOT_DELAY_MS;
+    analogWrite(LeftWheelPWM,  (int)(strongPwm * _motorCalibL * SPEED_SCALE));
+    analogWrite(RightWheelPWM, (int)(weakPwm   * _motorCalibR * SPEED_SCALE));
+    delay(turnDelay);
 
     // [3] 정지
     analogWrite(LeftWheelPWM, 0);
