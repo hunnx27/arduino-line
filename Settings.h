@@ -75,19 +75,19 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 #define CROSSING_PASS_POWER    70
 
 // 교차로 도착 전 사전 감속 PWM — 직전 교차로 이후 일정 시간 지나면 base 를 이 값으로 낮춤.
-#define CROSSING_APPROACH_POWER         80
-#define CROSSING_APPROACH_POWER_CARGO   70
+#define CROSSING_APPROACH_POWER         70
+#define CROSSING_APPROACH_POWER_CARGO   60
 
 // 사전 감속 임계값 (ms) — 직전 교차로 이후 이 시간 지나면 감속 시작.
 // 한 칸 평균 이동 시간의 ~70% 적당. 화물 적재 시 더 느리므로 따로.
-#define CROSSING_APPROACH_MS          600
-#define CROSSING_APPROACH_MS_CARGO    750
+#define CROSSING_APPROACH_MS          550
+#define CROSSING_APPROACH_MS_CARGO    700
 
 
 // -------------------- PD 제어 (라인 트레이서) --------------------
 // 진동 시: Kd ↓ 또는 Kp ↓. 곡선 lag 시: Kp ↑.
 // 일반적으로 Kd 는 Kp 의 5~30 배 사이에서 시작.
-#define PID_KP               0.05f
+#define PID_KP               0.04f
 #define PID_KD               0.6f
 // 보정량 saturation. 합산 후 절대값이 이 값 넘으면 클램프.
 #define PID_MAX_CORRECTION   35.0f
@@ -100,8 +100,8 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 
 // IR 거리 센서 — analog read 가 이 값 미만이면 장애물 있음으로 판단.
 // 측면용은 따로 (벽/측면 라인 오감지 줄이려면 더 낮게 설정 가능).
-#define OBSTACLE_THRESHOLD       500
-#define OBSTACLE_THRESHOLD_SIDE  500
+#define OBSTACLE_THRESHOLD       600
+#define OBSTACLE_THRESHOLD_SIDE  600
 
 
 // -------------------- 리프터 서보 각도 --------------------
