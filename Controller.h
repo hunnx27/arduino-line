@@ -129,6 +129,10 @@ private:
     // 현재 좌표/방향. 부팅 직후엔 시작 RFID 위치에서 시작 (eInitialPosition 핸들러에서 재설정).
     Pose currentPose = {INIT_START_X, INIT_START_Y, INIT_START_HEADING};
 
+    // 교차로 카운트 디바운스 래치. 1 = 현재 라인 위(이미 카운트됨).
+    // DoLineTrace 진입 시 현재 센서값으로 프라이밍 → 출발 라인 위에서 시작해도 재카운트 방지.
+    uint8_t _bSignalHigh = 0;
+
     // 네비게이션 보조 상태
     bool _preciseRealign = true;            // LineTracer 정렬 dance 수행 여부 (y=0/7 에서만 true)
     int8_t _blockedAtX = -128;              // 직전에 장애물로 막힌 좌표 (-128 = 없음)

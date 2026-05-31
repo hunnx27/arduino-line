@@ -392,6 +392,12 @@ bool Controller::DoLineTrace(uint16_t targetCount, bool precise)
 {
     _preciseRealign = precise;  // LineTracer 가 도달 시점에 읽음
     _lastCrossingTime = millis();   // 사전 감속 타이머 시작 — 직전 교차로 시점 기준
+
+    // 출발 라인 위에서 시작하면 그 라인은 카운트하지 않도록 래치 프라이밍.
+    // (cold-start 시 봇을 시작 RFID/교차로 위에 올려놓아도 첫 교차로를 오인하지 않음.
+    //  운행 중에도 정밀 정렬이 라인 위에서 끝나므로 동일하게 재카운트 방지.)
+    _bSignalHigh = (GetLeft() > LINEDETECT_THRESHOLD_MIN &&
+                    GetRight() > LINEDETECT_THRESHOLD_MIN) ? 1 : 0;
     while (!LineTracer(targetCount)) {
         if (enableObstacleAvoidance && CheckObstacle()) {
             Stop();
@@ -571,7 +577,6 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
 
 // 💡 교체할 두 번째 함수: P-제어 유지 및 선을 확실히 넘어가도록 세팅
 void Controller::LineTrace() {
-    static uint8_t bSignalHigh = 0;
     static unsigned long lastSensorLog = 0;
 
     int leftRaw = GetLeft();
@@ -588,21 +593,23 @@ void Controller::LineTrace() {
 
     // 교차로(검은선 2개 동시) 판단
     if (rightRaw > LINEDETECT_THRESHOLD_MIN && leftRaw > LINEDETECT_THRESHOLD_MIN) {
-        if (bSignalHigh == 0) {
+        if (_bSignalHigh == 0) {
             nLineCounter++;
             if (Serial) {
                 Serial.println(String("LINE!!! :") + String(nLineCounter));
             }
-            bSignalHigh = 1;
+            _bSignalHigh = 1;
             _prevError = 0;             // 교차로 진입 — D 항 spike 방지
             _lastCrossingTime = millis(); // 사전 감속 타이머 리셋 — 다음 교차로 기준
         }
+        tone(pinBuzzer, 1047);   // 도
         Forward(CrossingPassPower);   // 교차로 통과 시 감속 — overshoot 방지
-        delay((unsigned long)(50 / SPEED_SCALE)); // 🌟 선을 완전히 넘어가도록 약간의 전진 딜레이 유지 (그래야 후진할 때 선을 확실히 찾습니다)
+        delay((unsigned long)(100)); // 🌟 선을 완전히 넘어가도록 약간의 전진 딜레이 유지 (그래야 후진할 때 선을 확실히 찾습니다)
+        noTone(pinBuzzer);
     }
     else {
-        if (bSignalHigh) {
-            bSignalHigh = 0;
+        if (_bSignalHigh) {
+            _bSignalHigh = 0;
             _prevError = 0;   // 교차로 이탈 — D 항 spike 방지
         }
 
