@@ -945,7 +945,13 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
             else if (bdx == 1)  back = HD_EAST;
             else                back = HD_WEST;
             rotateToHeading(back);
-            bool bprec = (py == 0 || py == 7);
+            // 정밀 정렬(reverse-then-forward dance) 조건:
+            //   1) 최종 목표 좌표 도착, 또는
+            //   2) 수직 이동(N/S) 으로 row 0 (창고행) / row 7 (도시행) 도착
+            //      — 가로 라인 위 정렬 필요 (회전/RFID 정확도 확보)
+            bool arriveTarget = (px == tx && py == ty);
+            bool vertArrival  = (headingDy(back) != 0) && (py == 0 || py == 7);
+            bool bprec = arriveTarget || vertArrival;
             if (!DoLineTrace(1, bprec)) {
                 // 방금 지나온 길에 장애물 — 드문 케이스(움직이는 장애물). 일단 포기.
                 if (Serial) Serial.println(F("Obstacle on backtrack — STUCK."));
@@ -977,7 +983,13 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
 
         int8_t newX = currentPose.x + headingDx(desired);
         int8_t newY = currentPose.y + headingDy(desired);
-        bool precise = (newY == 0 || newY == 7);
+        // 정밀 정렬 조건:
+        //   1) 최종 목표 좌표 도착, 또는
+        //   2) 수직 이동(N/S) 으로 row 0 (창고행) / row 7 (도시행) 도착
+        //      — 가로 라인 위 정렬 필요 (회전/RFID 정확도 확보)
+        bool arriveTarget = (newX == tx && newY == ty);
+        bool vertArrival  = (headingDy(desired) != 0) && (newY == 0 || newY == 7);
+        bool precise = arriveTarget || vertArrival;
 
         if (DoLineTrace(1, precise)) {
             // 성공 — pose 갱신, 새 칸 push, 방문 카운트 증가, 임시 마스킹 해제
