@@ -122,6 +122,7 @@ private:
     Servo servo;
     int _servoAngle = SERVO_DEF;   // 현재 리프터 각도 추적 (부드러운 슬루 기준점)
     bool _hasPayload = false;      // 팔레트 적재 여부 — LifterUp/Down 이 토글. cargo(느린/부드러운) 거동 판정 기준.
+    bool _inApproachPrev = false;  // 사전 감속 전환 edge 감지용 (DEBUG_APPROACH_TONE).
     String  strRFID;
     bool isBusy = false;
 
@@ -175,12 +176,8 @@ public:
     bool DoLineTrace(uint16_t targetCount, bool precise = true);
     void LineTrace();
     void ResetLineCounter();
-    void Move();
     void drive(int dir1, int power1, int dir2, int power2);
     void Forward(int power);
-    void Backward(int power);
-    void TurnLeft(int power);
-    void TurnRight(int power);
     void Stop();
     void TurnHalf();
     void PivotTurnLeft();
@@ -201,6 +198,9 @@ public:
     // 💡 첫 번째 코드에서 가져온 정규화 함수 선언
     int normalizeLeft(int rawValue);
     int normalizeRight(int rawValue);
+
+    // 양 바닥 센서가 검은선(교차로) 위인지 — 캘리브 정규화 기준(폴백: raw).
+    bool onLine(int rawLeft, int rawRight);
 
     // 좌표 네비게이션 — 목적지 도달 시 true, 막혀서 중단되면 false 반환
     bool navigateTo(int8_t tx, int8_t ty);

@@ -17,7 +17,7 @@
 // -------------------- 전체 속도 스케일 --------------------
 // 1.0 = 원래 속도. PWM 은 이 비율만큼 줄고, 각도/거리 유지 delay 는 1/SPEED_SCALE 배.
 // 권장 0.5 ~ 1.0. 0.5 미만은 정지마찰로 모터 안 돌 수 있음.
-#define SPEED_SCALE 1.0f
+#define SPEED_SCALE 1.1f
 
 
 // -------------------- 그리드 크기 --------------------
@@ -84,8 +84,14 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 
 // 사전 감속 임계값 (ms) — 직전 교차로 이후 이 시간 지나면 감속 시작.
 // 한 칸 평균 이동 시간의 ~70% 적당. 화물 적재 시 더 느리므로 따로.
-#define CROSSING_APPROACH_MS          500
-#define CROSSING_APPROACH_MS_CARGO    600
+#define CROSSING_APPROACH_MS          300
+#define CROSSING_APPROACH_MS_CARGO    400
+
+// [디버그] 사전 감속이 시작되는 순간(전속→감속 전환)에 짧은 부저음.
+// CROSSING_APPROACH_MS 경과 시점을 귀로 확인용. 교차로 사이 1회 울림(비블로킹).
+//   0 = 끔(실주행/대회).  1 = 켬.
+#define DEBUG_APPROACH_TONE      1
+#define DEBUG_APPROACH_TONE_HZ   784   // 솔(G5)
 
 
 // -------------------- PD 제어 (라인 트레이서) --------------------
@@ -113,14 +119,22 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 
 
 // -------------------- 라인 / 장애물 센서 임계값 --------------------
-// 양 바닥 센서가 이 값 이상이면 교차로 검출
-#define LINEDETECT_THRESHOLD_MIN     730
-#define BLANKDETECT_THERSHOLD_MAX    500
+// 라인/교차로 검출은 흑/백 캘리브(EEPROM) 기반 정규화 값으로 판정 → 로봇·바닥 독립.
+//   normalizeLeft/Right() 가 raw 를 흰=0 ~ 검=1000 으로 매핑. 양 바닥 센서가
+//   LINEDETECT_NORM_MIN 이상이면 "검은선(교차로) 위"로 인정.
+//   ↑ 올림: 옅은 선/반사 노이즈에 덜 민감(놓칠 위험 ↑). ↓ 내림: 더 민감(오검출 ↑).
+//   DEBUG_TRACE=1 로 라인 위에서 찍히는 L_n/R_n 값을 보고 그 사이로 맞추면 됨.
+#define LINEDETECT_NORM_MIN          700
+// 안전장치: 흑-백 raw 격차가 이 값보다 작으면 캘리브 무효로 보고 아래 raw 폴백 사용
+// (캘리브 안 된/EEPROM 초기화된 보드에서 정규화가 항상 1000 되는 오작동 방지).
+#define LINEDETECT_CALIB_MIN_SPAN    100
+// 캘리브 무효 시 폴백 raw 임계값 (구 LINEDETECT_THRESHOLD_MIN). 로봇 종속이므로 비상용.
+#define LINEDETECT_RAW_FALLBACK      730
 
 // IR 거리 센서 — analog read 가 이 값 미만이면 장애물 있음으로 판단.
 // 측면용은 따로 (벽/측면 라인 오감지 줄이려면 더 낮게 설정 가능).
-#define OBSTACLE_THRESHOLD       600
-#define OBSTACLE_THRESHOLD_SIDE  600
+#define OBSTACLE_THRESHOLD       700
+#define OBSTACLE_THRESHOLD_SIDE  700
 
 
 // -------------------- 리프터 서보 --------------------

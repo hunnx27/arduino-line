@@ -336,6 +336,21 @@ int Controller::normalizeRight(int rawValue) {
     return (int)normValue;
 }
 
+// 양 바닥 센서가 검은선(교차로) 위인지 판정.
+// 1순위: 흑/백 캘리브 정규화(흰0~검1000) > LINEDETECT_NORM_MIN → 로봇/바닥 독립.
+// 폴백: 흑-백 격차가 너무 작으면(캘리브 무효/EEPROM 초기화) raw 임계값으로 판정.
+bool Controller::onLine(int rawLeft, int rawRight) {
+    long spanL = (long)_leftBlack  - _leftWhite;
+    long spanR = (long)_rightBlack - _rightWhite;
+    if (spanL > LINEDETECT_CALIB_MIN_SPAN && spanR > LINEDETECT_CALIB_MIN_SPAN) {
+        return normalizeLeft(rawLeft)  > LINEDETECT_NORM_MIN
+            && normalizeRight(rawRight) > LINEDETECT_NORM_MIN;
+    }
+    // 캘리브 무효 → raw 폴백 (로봇 종속, 비상용)
+    return rawLeft  > LINEDETECT_RAW_FALLBACK
+        && rawRight > LINEDETECT_RAW_FALLBACK;
+}
+
 bool Controller::CheckObstacle() {
     int center = analogRead(SensorFrontCenter);
     int left   = analogRead(SensorFrontLeft);
@@ -363,13 +378,9 @@ bool Controller::CheckObstacle() {
 
 void Controller::ReverseToPreviousNode() {
     if (Serial) Serial.println("Obstacle! Reversing...");
-    drive(BACKWARD, Power, BACKWARD, Power);
-    delay((unsigned long)(500 / SPEED_SCALE));
-
+    drive(BACKWARD, Power, BACKWARD, Power);\
     while (true) {
-        int right = GetRight();
-        int left = GetLeft();
-        if (right > LINEDETECT_THRESHOLD_MIN && left > LINEDETECT_THRESHOLD_MIN) {
+        if (onLine(GetLeft(), GetRight())) {
             break;
         }
     }
@@ -378,9 +389,7 @@ void Controller::ReverseToPreviousNode() {
 
     drive(FORWARD, Power - 40, FORWARD, Power - 40);
     while (true) {
-        int left = GetLeft();
-        int right = GetRight();
-        if (left > LINEDETECT_THRESHOLD_MIN && right > LINEDETECT_THRESHOLD_MIN) break;
+        if (onLine(GetLeft(), GetRight())) break;
     }
     delay((unsigned long)(120 / SPEED_SCALE));  // 라인 올라탄 뒤 정렬 크리프(거리 보존). LineTracer 정렬과 동일 형식.
 
@@ -396,8 +405,7 @@ bool Controller::DoLineTrace(uint16_t targetCount, bool precise)
     // 출발 라인 위에서 시작하면 그 라인은 카운트하지 않도록 래치 프라이밍.
     // (cold-start 시 봇을 시작 RFID/교차로 위에 올려놓아도 첫 교차로를 오인하지 않음.
     //  운행 중에도 정밀 정렬이 라인 위에서 끝나므로 동일하게 재카운트 방지.)
-    _bSignalHigh = (GetLeft() > LINEDETECT_THRESHOLD_MIN &&
-                    GetRight() > LINEDETECT_THRESHOLD_MIN) ? 1 : 0;
+    _bSignalHigh = onLine(GetLeft(), GetRight()) ? 1 : 0;
     while (!LineTracer(targetCount)) {
         if (enableObstacleAvoidance && CheckObstacle()) {
             Stop();
@@ -570,9 +578,7 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
 
             drive(FORWARD, Power - 40, FORWARD, Power - 40);
             while (true) {
-                int left = GetLeft();
-                int right = GetRight();
-                if (left > LINEDETECT_THRESHOLD_MIN && right > LINEDETECT_THRESHOLD_MIN) break;
+                if (onLine(GetLeft(), GetRight())) break;
             }
             delay((unsigned long)(120 / SPEED_SCALE));  // 라인 올라탄 뒤 정렬 크리프(거리 보존). 120ms = SPEED_SCALE=1.0 기준.
 
@@ -611,8 +617,8 @@ void Controller::LineTrace() {
     }
 #endif
 
-    // 교차로(검은선 2개 동시) 판단
-    if (rightRaw > LINEDETECT_THRESHOLD_MIN && leftRaw > LINEDETECT_THRESHOLD_MIN) {
+    // 교차로(검은선 2개 동시) 판단 — 캘리브 정규화 기준
+    if (onLine(leftRaw, rightRaw)) {
         if (_bSignalHigh == 0) {
             nLineCounter++;
             if (Serial) {
@@ -650,6 +656,15 @@ void Controller::LineTrace() {
         bool cargo = _hasPayload;
         unsigned long approachThreshold = cargo ? CrossingApproachMsCargo : CrossingApproachMs;
         bool inApproach = (millis() - _lastCrossingTime) > approachThreshold;
+#if DEBUG_APPROACH_TONE
+        // 사전 감속 시작(전속→감속 전환) 순간에 한 번만 부저음. tone 의 duration 인자로
+        // 비블로킹 재생(자동 정지) → 제어 루프 안 막음. 교차로마다 _lastCrossingTime 이
+        // 리셋되며 inApproach 가 false 로 돌아가 자동 재무장.
+        if (inApproach && !_inApproachPrev) {
+            tone(pinBuzzer, DEBUG_APPROACH_TONE_HZ, 60);
+        }
+        _inApproachPrev = inApproach;
+#endif
         int basePower;
         if (inApproach) {
             basePower = cargo ? CROSSING_APPROACH_POWER_CARGO : CrossingApproachPower;
@@ -668,15 +683,6 @@ void Controller::LineTrace() {
 void Controller::ResetLineCounter()
 {
     nLineCounter = 0;
-}
-
-void Controller::Move()
-{
-    Stop();
-    delay(10);
-    analogWrite(LeftWheelPWM,  (int)(140 * _motorCalibL * SPEED_SCALE));
-    analogWrite(RightWheelPWM, (int)(140 * _motorCalibR * SPEED_SCALE));
-    delay((unsigned long)(100 / SPEED_SCALE));
 }
 
 void  Controller::drive(int dir1, int power1, int dir2, int power2)
@@ -705,21 +711,6 @@ void  Controller::drive(int dir1, int power1, int dir2, int power2)
 void  Controller::Forward(int power)
 {
     drive(FORWARD, power, FORWARD, power);
-}
-
-void  Controller::Backward(int power)
-{
-    drive(BACKWARD, power, BACKWARD, power);
-}
-
-void  Controller::TurnLeft(int power)
-{
-    drive(BACKWARD, power, FORWARD, power);
-}
-
-void  Controller::TurnRight(int power)
-{
-    drive(FORWARD, power, BACKWARD, power);
 }
 
 void Controller::Stop()
