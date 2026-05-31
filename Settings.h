@@ -91,10 +91,16 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 // -------------------- PD 제어 (라인 트레이서) --------------------
 // 진동 시: Kd ↓ 또는 Kp ↓. 곡선 lag 시: Kp ↑.
 // 일반적으로 Kd 는 Kp 의 5~30 배 사이에서 시작.
-#define PID_KP               0.03f
-#define PID_KD               0.3f
-// 보정량 saturation. 합산 후 절대값이 이 값 넘으면 클램프.
-#define PID_MAX_CORRECTION   35.0f
+#define PID_KP               0.04f
+#define PID_KD               0.4f
+// 조향 보정량 saturation. leftPWM = base+correction, rightPWM = base-correction
+// 이므로 좌우 바퀴 PWM 차이는 최대 2×이 값. 라인에서 아무리 벗어나도(또는 D항이
+// 순간 튀어도) 이 폭 이상은 안 꺾는다 → 주 역할은 D항 스파이크 억제.
+//   ↑ 올림(예 50): 곡선/급이탈에서 라인 못 따라가고 바깥으로 흘러나갈 때.
+//                  (Kp 올려도 여기 걸리면 소용없음 — 이 상한부터 풀어야 함)
+//   ↓ 내림(예 20): 직선에서 좌우 지그재그/진동(overshoot) 심할 때.
+// 튜닝 순서: Kp/Kd 를 먼저 맞추고, saturation 이 실제로 걸릴 때만 마지막에 조정.
+#define PID_MAX_CORRECTION   30.0f
 
 
 // -------------------- 라인 / 장애물 센서 임계값 --------------------
