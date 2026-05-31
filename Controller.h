@@ -120,6 +120,7 @@ private:
 
     MFRC522 mfrc522;
     Servo servo;
+    int _servoAngle = SERVO_DEF;   // 현재 리프터 각도 추적 (부드러운 슬루 기준점)
     String  strRFID;
     bool isBusy = false;
 
@@ -161,6 +162,7 @@ public:
     //Lift Controller
     void  LifterUp();
     void  LifterDown();
+    void  LifterMove(int targetAngle);   // 목표각까지 단계적으로 슬루(부드러운 이동)
 
     // RFID Read
     bool RFIDRead();
@@ -182,6 +184,8 @@ public:
     void TurnHalf();
     void PivotTurnLeft();
     void PivotTurnRight();
+    // 사다리꼴(가속→정속→감속) 회전 프리미티브 — 위 3개 회전이 공통 사용.
+    void RampTurn(int dirL, int dirR, int cruiseL, int cruiseR, unsigned long holdMs);
 
     // IR Sensor Value
     int16_t GetLeft();

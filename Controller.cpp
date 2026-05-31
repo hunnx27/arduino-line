@@ -485,24 +485,37 @@ void Controller::ProcessRFIDRead()
     }
 }
 
-void  Controller::LifterUp()
+// 목표각까지 SERVO_STEP_DEG 씩 단계적으로 써서 부드럽게 슬루.
+// _servoAngle 로 현재 위치를 추적 → 어느 방향이든 한 스텝씩 이동.
+void  Controller::LifterMove(int targetAngle)
 {
     servo.attach(LiftServo);
     delay(10);
-    servo.write(SERVO_UP);
-    delay(300);
+
+    int a = _servoAngle;
+    int step = (targetAngle >= a) ? SERVO_STEP_DEG : -SERVO_STEP_DEG;
+    while (a != targetAngle) {
+        a += step;
+        // 목표 넘어가면 클램프
+        if ((step > 0 && a > targetAngle) || (step < 0 && a < targetAngle)) a = targetAngle;
+        servo.write(a);
+        delay(SERVO_STEP_MS);
+    }
+    _servoAngle = targetAngle;
+
+    delay(SERVO_SETTLE_MS);   // 안착 대기 후 detach
     servo.detach();
     delay(10);
 }
 
+void  Controller::LifterUp()
+{
+    LifterMove(SERVO_UP);
+}
+
 void  Controller::LifterDown()
 {
-    servo.attach(LiftServo);
-    delay(10);
-    servo.write(SERVO_DOWN);
-    delay(300);
-    servo.detach();
-    delay(10);
+    LifterMove(SERVO_DOWN);
 }
 
 bool Controller::RFIDRead()
@@ -577,12 +590,16 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
 
 // 💡 교체할 두 번째 함수: P-제어 유지 및 선을 확실히 넘어가도록 세팅
 void Controller::LineTrace() {
+#if DEBUG_TRACE
     static unsigned long lastSensorLog = 0;
+#endif
 
     int leftRaw = GetLeft();
     int rightRaw = GetRight();
 
-    // 디버그: 200ms마다 좌/우 raw 값과 정규화 값 출력
+    // 디버그: 200ms마다 좌/우 raw 값과 정규화 값 출력.
+    // DEBUG_TRACE=0 이면 컴파일에서 제외 → Serial 블로킹 장님 구간 제거(교차로 인식 안정).
+#if DEBUG_TRACE
     if (millis() - lastSensorLog > 200) {
         Serial.print("L_raw=");  Serial.print(leftRaw);
         Serial.print(" R_raw="); Serial.print(rightRaw);
@@ -590,6 +607,7 @@ void Controller::LineTrace() {
         Serial.print(" R_n=");   Serial.println(normalizeRight(rightRaw));
         lastSensorLog = millis();
     }
+#endif
 
     // 교차로(검은선 2개 동시) 판단
     if (rightRaw > LINEDETECT_THRESHOLD_MIN && leftRaw > LINEDETECT_THRESHOLD_MIN) {
@@ -708,78 +726,66 @@ void Controller::Stop()
     analogWrite(RightWheelPWM, 0);
 }
 
+// 사다리꼴 속도 프로파일 회전 프리미티브.
+//   dirL/dirR   : 각 바퀴 방향 (FORWARD/BACKWARD) — drive() 가 방향 반전/캘리브/스케일 처리.
+//   cruiseL/R   : 정속 구간 목표 PWM (제자리 회전이면 동일, 피벗이면 강/약 비대칭).
+//   holdMs      : 정속 유지 시간 — 회전각의 주 결정 요소.
+// 가속(TURN_START_PWM→cruise) → 정속 → 감속(cruise→TURN_START_PWM) → 정지.
+void Controller::RampTurn(int dirL, int dirR, int cruiseL, int cruiseR, unsigned long holdMs)
+{
+    // [1] 가속: TURN_START_PWM 에서 cruise 까지 선형 증가.
+    for (int i = 1; i <= TURN_RAMP_STEPS; i++) {
+        float f = (float)i / TURN_RAMP_STEPS;
+        int pl = TURN_START_PWM + (int)((cruiseL - TURN_START_PWM) * f);
+        int pr = TURN_START_PWM + (int)((cruiseR - TURN_START_PWM) * f);
+        drive(dirL, pl, dirR, pr);
+        delay(TURN_RAMP_STEP_MS);
+    }
+    // [2] 정속 — 회전각은 이 구간 시간으로 결정.
+    drive(dirL, cruiseL, dirR, cruiseR);
+    delay(holdMs);
+    // [3] 감속: cruise 에서 TURN_START_PWM 까지 선형 감소 → overshoot 완화.
+    for (int i = TURN_RAMP_STEPS - 1; i >= 1; i--) {
+        float f = (float)i / TURN_RAMP_STEPS;
+        int pl = TURN_START_PWM + (int)((cruiseL - TURN_START_PWM) * f);
+        int pr = TURN_START_PWM + (int)((cruiseR - TURN_START_PWM) * f);
+        drive(dirL, pl, dirR, pr);
+        delay(TURN_RAMP_STEP_MS);
+    }
+    Stop();
+    delay(TURN_SETTLE_MS);   // 차체 안정화 — 다음 전진/정렬 전에 진동 가라앉힘
+}
+
 void Controller::TurnHalf() {
     bool cargo = (currentPosition == eWareHousePosition);
-    drive(BACKWARD, 80, FORWARD, 80);
-    delay((unsigned long)(50));
     // 화물 적재 시 각속도 ↓ (원심력으로 팔레트 슬라이드 방지). 각도 유지 위해 delay 살짝 ↑.
-    int turnPwm                = cargo ? TURNHALF_PWM_CARGO      : TURNHALF_PWM;
-    unsigned long turnDelay    = cargo ? TURNHALF_DELAY_MS_CARGO : TURNHALF_DELAY_MS;
-    drive(BACKWARD, turnPwm, FORWARD, turnPwm);
-    delay(turnDelay);
-    Stop();
+    int turnPwm             = cargo ? TURNHALF_PWM_CARGO      : TURNHALF_PWM;
+    unsigned long turnDelay = cargo ? TURNHALF_DELAY_MS_CARGO : TURNHALF_DELAY_MS;
+    // 제자리 좌회전(왼쪽 후진/오른쪽 전진) 180°.
+    RampTurn(BACKWARD, FORWARD, turnPwm, turnPwm, turnDelay);
 }
 
 void Controller::PivotTurnLeft()
 {
     if (Serial) Serial.println("Enter Pivot turn Left");
-    analogWrite(LeftWheelPWM, 0);
-    analogWrite(RightWheelPWM, 0);
-    delay(10);
-    digitalWrite(LeftWheelDir, 0);
-    digitalWrite(RightWheelDir, 0);
-
-    Move();
-    delay(10);
     bool cargo = (currentPosition == eWareHousePosition);
-    // [1] 킥스타트: 정지 마찰 극복용 초기 부스트 (양쪽 동일 PWM, motorCalib 적용).
-    analogWrite(LeftWheelPWM,  (int)(PIVOT_KICK_PWM * _motorCalibL * SPEED_SCALE));
-    analogWrite(RightWheelPWM, (int)(PIVOT_KICK_PWM * _motorCalibR * SPEED_SCALE));
-    delay((unsigned long)(PIVOT_KICK_MS / SPEED_SCALE));
-    // [2] 회전 구간: 왼쪽 약, 오른쪽 강 → 좌회전 (시간으로 회전각 결정).
-    // 화물 적재 시 PWM ↓ + delay ↑ (팔레트 슬라이드 방지).
+    // 왼쪽 약, 오른쪽 강 → 좌회전 (왼쪽 후진/오른쪽 전진). 회전각은 holdMs 로 결정.
     int strongPwm           = cargo ? PIVOT_LEFT_STRONG_PWM_CARGO : PIVOT_LEFT_STRONG_PWM;
     int weakPwm             = cargo ? PIVOT_LEFT_WEAK_PWM_CARGO   : PIVOT_LEFT_WEAK_PWM;
     unsigned long turnDelay = cargo ? PIVOT_DELAY_MS_CARGO        : PIVOT_DELAY_MS;
-    analogWrite(LeftWheelPWM,  (int)(weakPwm   * _motorCalibL * SPEED_SCALE));
-    analogWrite(RightWheelPWM, (int)(strongPwm * _motorCalibR * SPEED_SCALE));
-    delay(turnDelay);
-
-    // [3] 정지
-    analogWrite(LeftWheelPWM, 0);
-    analogWrite(RightWheelPWM, 0);
-
+    RampTurn(BACKWARD, FORWARD, weakPwm, strongPwm, turnDelay);
     if (Serial) Serial.println("Leave Pivot turn Left");
 }
 
 void Controller::PivotTurnRight()
 {
     if (Serial) Serial.println("Enter Pivot turn Right");
-    analogWrite(LeftWheelPWM, 0);
-    analogWrite(RightWheelPWM, 0);
-    delay(10);
-    digitalWrite(LeftWheelDir, 1);
-    digitalWrite(RightWheelDir, 1);
-
-    Move();
-    delay(10);
     bool cargo = (currentPosition == eWareHousePosition);
-    // [1] 킥스타트: 정지 마찰 극복용 초기 부스트 (양쪽 동일 PWM).
-    analogWrite(LeftWheelPWM,  (int)(PIVOT_KICK_PWM * _motorCalibL * SPEED_SCALE));
-    analogWrite(RightWheelPWM, (int)(PIVOT_KICK_PWM * _motorCalibR * SPEED_SCALE));
-    delay((unsigned long)(PIVOT_KICK_MS / SPEED_SCALE));
-    // [2] 회전 구간: 왼쪽 강, 오른쪽 약 → 우회전 (시간으로 회전각 결정).
-    // 화물 적재 시 PWM ↓ + delay ↑ (팔레트 슬라이드 방지).
+    // 왼쪽 강, 오른쪽 약 → 우회전 (왼쪽 전진/오른쪽 후진). 회전각은 holdMs 로 결정.
     int strongPwm           = cargo ? PIVOT_RIGHT_STRONG_PWM_CARGO : PIVOT_RIGHT_STRONG_PWM;
     int weakPwm             = cargo ? PIVOT_RIGHT_WEAK_PWM_CARGO   : PIVOT_RIGHT_WEAK_PWM;
     unsigned long turnDelay = cargo ? PIVOT_DELAY_MS_CARGO         : PIVOT_DELAY_MS;
-    analogWrite(LeftWheelPWM,  (int)(strongPwm * _motorCalibL * SPEED_SCALE));
-    analogWrite(RightWheelPWM, (int)(weakPwm   * _motorCalibR * SPEED_SCALE));
-    delay(turnDelay);
-
-    // [3] 정지
-    analogWrite(LeftWheelPWM, 0);
-    analogWrite(RightWheelPWM, 0);
+    RampTurn(FORWARD, BACKWARD, strongPwm, weakPwm, turnDelay);
     if (Serial) Serial.println("Leave Pivot turn Right");
 }
 
