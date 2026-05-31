@@ -72,23 +72,23 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 
 // 교차로 통과 시 (양 센서 검출 상태) 감속 PWM — overshoot 방지.
 // 50 미만 비추 (정지마찰로 멈출 위험).
-#define CROSSING_PASS_POWER    70
+#define CROSSING_PASS_POWER    110
 
 // 교차로 도착 전 사전 감속 PWM — 직전 교차로 이후 일정 시간 지나면 base 를 이 값으로 낮춤.
 #define CROSSING_APPROACH_POWER         70
-#define CROSSING_APPROACH_POWER_CARGO   60
+#define CROSSING_APPROACH_POWER_CARGO   70
 
 // 사전 감속 임계값 (ms) — 직전 교차로 이후 이 시간 지나면 감속 시작.
 // 한 칸 평균 이동 시간의 ~70% 적당. 화물 적재 시 더 느리므로 따로.
-#define CROSSING_APPROACH_MS          550
+#define CROSSING_APPROACH_MS          400
 #define CROSSING_APPROACH_MS_CARGO    700
 
 
 // -------------------- PD 제어 (라인 트레이서) --------------------
 // 진동 시: Kd ↓ 또는 Kp ↓. 곡선 lag 시: Kp ↑.
 // 일반적으로 Kd 는 Kp 의 5~30 배 사이에서 시작.
-#define PID_KP               0.04f
-#define PID_KD               0.6f
+#define PID_KP               0.03f
+#define PID_KD               0.3f
 // 보정량 saturation. 합산 후 절대값이 이 값 넘으면 클램프.
 #define PID_MAX_CORRECTION   35.0f
 
@@ -126,9 +126,9 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 // Pivot turn 회전 구간 [2] — 강/약 PWM 차이로 시간 회전. 회전각은 delay 로 결정.
 // 좌/우 비대칭 — 좌회전이 약간 더 빨라 강측 180 (우회전 강측 170).
 // 화물 적재 시 PWM ↓ (각속도 ↓ → 팔레트 슬라이드 방지). 각도 유지 위해 delay ↑.
-#define PIVOT_LEFT_STRONG_PWM         180   // 좌회전 시 오른쪽 바퀴
+#define PIVOT_LEFT_STRONG_PWM         170   // 좌회전 시 오른쪽 바퀴
 #define PIVOT_LEFT_WEAK_PWM           90    // 좌회전 시 왼쪽 바퀴
-#define PIVOT_LEFT_STRONG_PWM_CARGO   160
+#define PIVOT_LEFT_STRONG_PWM_CARGO   150
 #define PIVOT_LEFT_WEAK_PWM_CARGO     80
 
 #define PIVOT_RIGHT_STRONG_PWM        170   // 우회전 시 왼쪽 바퀴
@@ -136,7 +136,7 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 #define PIVOT_RIGHT_STRONG_PWM_CARGO  150
 #define PIVOT_RIGHT_WEAK_PWM_CARGO    80
 
-#define PIVOT_DELAY_MS                110
+#define PIVOT_DELAY_MS                140
 #define PIVOT_DELAY_MS_CARGO          170
 
 
