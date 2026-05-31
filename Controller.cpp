@@ -511,11 +511,13 @@ void  Controller::LifterMove(int targetAngle)
 void  Controller::LifterUp()
 {
     LifterMove(SERVO_UP);
+    _hasPayload = true;    // 팔레트 적재 — 이후 cargo(느린/부드러운) 거동
 }
 
 void  Controller::LifterDown()
 {
     LifterMove(SERVO_DOWN);
+    _hasPayload = false;   // 팔레트 내림 — 이후 일반(빠른) 거동
 }
 
 bool Controller::RFIDRead()
@@ -645,7 +647,7 @@ void Controller::LineTrace() {
 
         // 사전 감속: 직전 교차로 후 일정 시간 지나면 base PWM 을 낮춤.
         // 화물 적재(eWareHousePosition) 는 느리므로 임계값/감속 PWM 따로 (Settings.h).
-        bool cargo = (currentPosition == eWareHousePosition);
+        bool cargo = _hasPayload;
         unsigned long approachThreshold = cargo ? CrossingApproachMsCargo : CrossingApproachMs;
         bool inApproach = (millis() - _lastCrossingTime) > approachThreshold;
         int basePower;
@@ -735,7 +737,7 @@ void Controller::Stop()
 // 더 잘게·완만하게 돌아 팔레트 슬라이드/관성 흔들림을 줄인다.
 void Controller::RampTurn(int dirL, int dirR, int cruiseL, int cruiseR, unsigned long holdMs)
 {
-    bool cargo  = (currentPosition == eWareHousePosition);
+    bool cargo  = _hasPayload;
     int  steps  = cargo ? TURN_RAMP_STEPS_CARGO   : TURN_RAMP_STEPS;
     int  stepMs = cargo ? TURN_RAMP_STEP_MS_CARGO : TURN_RAMP_STEP_MS;
     int  startP = cargo ? TURN_START_PWM_CARGO    : TURN_START_PWM;
@@ -773,7 +775,7 @@ void Controller::RampTurn(int dirL, int dirR, int cruiseL, int cruiseR, unsigned
 }
 
 void Controller::TurnHalf() {
-    bool cargo = (currentPosition == eWareHousePosition);
+    bool cargo = _hasPayload;
     // 화물 적재 시 각속도 ↓ (원심력으로 팔레트 슬라이드 방지). 각도 유지 위해 delay 살짝 ↑.
     int turnPwm             = cargo ? TURNHALF_PWM_CARGO      : TURNHALF_PWM;
     unsigned long turnDelay = cargo ? TURNHALF_DELAY_MS_CARGO : TURNHALF_DELAY_MS;
@@ -784,7 +786,7 @@ void Controller::TurnHalf() {
 void Controller::PivotTurnLeft()
 {
     if (Serial) Serial.println("Enter Pivot turn Left");
-    bool cargo = (currentPosition == eWareHousePosition);
+    bool cargo = _hasPayload;
     // 왼쪽 약, 오른쪽 강 → 좌회전 (왼쪽 후진/오른쪽 전진). 회전각은 holdMs 로 결정.
     int strongPwm           = cargo ? PIVOT_LEFT_STRONG_PWM_CARGO : PIVOT_LEFT_STRONG_PWM;
     int weakPwm             = cargo ? PIVOT_LEFT_WEAK_PWM_CARGO   : PIVOT_LEFT_WEAK_PWM;
@@ -796,7 +798,7 @@ void Controller::PivotTurnLeft()
 void Controller::PivotTurnRight()
 {
     if (Serial) Serial.println("Enter Pivot turn Right");
-    bool cargo = (currentPosition == eWareHousePosition);
+    bool cargo = _hasPayload;
     // 왼쪽 강, 오른쪽 약 → 우회전 (왼쪽 전진/오른쪽 후진). 회전각은 holdMs 로 결정.
     int strongPwm           = cargo ? PIVOT_RIGHT_STRONG_PWM_CARGO : PIVOT_RIGHT_STRONG_PWM;
     int weakPwm             = cargo ? PIVOT_RIGHT_WEAK_PWM_CARGO   : PIVOT_RIGHT_WEAK_PWM;

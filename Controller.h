@@ -121,6 +121,7 @@ private:
     MFRC522 mfrc522;
     Servo servo;
     int _servoAngle = SERVO_DEF;   // 현재 리프터 각도 추적 (부드러운 슬루 기준점)
+    bool _hasPayload = false;      // 팔레트 적재 여부 — LifterUp/Down 이 토글. cargo(느린/부드러운) 거동 판정 기준.
     String  strRFID;
     bool isBusy = false;
 
