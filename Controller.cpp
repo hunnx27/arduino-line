@@ -382,7 +382,7 @@ void Controller::ReverseToPreviousNode() {
         int right = GetRight();
         if (left > LINEDETECT_THRESHOLD_MIN && right > LINEDETECT_THRESHOLD_MIN) break;
     }
-    delay(300 - (300*SPEED_SCALE));
+    delay((unsigned long)(120 / SPEED_SCALE));  // 라인 올라탄 뒤 정렬 크리프(거리 보존). LineTracer 정렬과 동일 형식.
 
     Stop();
     delay(200); // 차체 안정화
@@ -558,10 +558,10 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
             Stop();
             delay(150);
 
-            // forward overshoot ∝ v² ∝ PWM² ∝ SPEED_SCALE² 이므로 후진 거리도 SPEED_SCALE² 만큼 줄임.
-            // drive() PWM × SPEED_SCALE  +  delay × SPEED_SCALE  =  거리 × SPEED_SCALE².
+            // 거리 보존: PWM 은 drive() 에서 ×SPEED_SCALE 되므로, 같은 후진 거리를 유지하려면
+            // 시간을 /SPEED_SCALE. 240ms 는 SPEED_SCALE=1.0 기준 튜닝값(= 옛 400×0.6).
             drive(BACKWARD, Power, BACKWARD, Power);
-            delay(400 * 0.6f);
+            delay((unsigned long)(240 / SPEED_SCALE));
 
             Stop();
             delay(100); // 기어 방향 전환 전 잠깐 대기
@@ -572,7 +572,7 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
                 int right = GetRight();
                 if (left > LINEDETECT_THRESHOLD_MIN && right > LINEDETECT_THRESHOLD_MIN) break;
             }
-            delay(300 - (300*0.6f));
+            delay((unsigned long)(120 / SPEED_SCALE));  // 라인 올라탄 뒤 정렬 크리프(거리 보존). 120ms = SPEED_SCALE=1.0 기준.
 
             Stop();
             delay(200); // 차체 안정화
@@ -622,7 +622,7 @@ void Controller::LineTrace() {
         }
         tone(pinBuzzer, 1047);   // 도
         Forward(CrossingPassPower);   // 교차로 통과 시 감속 — overshoot 방지
-        delay((unsigned long)(100)); // 🌟 선을 완전히 넘어가도록 약간의 전진 딜레이 유지 (그래야 후진할 때 선을 확실히 찾습니다)
+        delay((unsigned long)(100 / SPEED_SCALE)); // 🌟 선을 완전히 넘어가도록 약간의 전진(거리 보존). 100ms = SPEED_SCALE=1.0 기준.
         noTone(pinBuzzer);
     }
     else {
@@ -730,30 +730,46 @@ void Controller::Stop()
 //   dirL/dirR   : 각 바퀴 방향 (FORWARD/BACKWARD) — drive() 가 방향 반전/캘리브/스케일 처리.
 //   cruiseL/R   : 정속 구간 목표 PWM (제자리 회전이면 동일, 피벗이면 강/약 비대칭).
 //   holdMs      : 정속 유지 시간 — 회전각의 주 결정 요소.
-// 가속(TURN_START_PWM→cruise) → 정속 → 감속(cruise→TURN_START_PWM) → 정지.
+// 가속(startPwm→cruise) → 정속 → 감속(cruise→startPwm) → 정지.
+// 화물 적재(eWareHousePosition) 시 가감속 파라미터를 _CARGO 변형으로 전환 →
+// 더 잘게·완만하게 돌아 팔레트 슬라이드/관성 흔들림을 줄인다.
 void Controller::RampTurn(int dirL, int dirR, int cruiseL, int cruiseR, unsigned long holdMs)
 {
-    // [1] 가속: TURN_START_PWM 에서 cruise 까지 선형 증가.
-    for (int i = 1; i <= TURN_RAMP_STEPS; i++) {
-        float f = (float)i / TURN_RAMP_STEPS;
-        int pl = TURN_START_PWM + (int)((cruiseL - TURN_START_PWM) * f);
-        int pr = TURN_START_PWM + (int)((cruiseR - TURN_START_PWM) * f);
+    bool cargo  = (currentPosition == eWareHousePosition);
+    int  steps  = cargo ? TURN_RAMP_STEPS_CARGO   : TURN_RAMP_STEPS;
+    int  stepMs = cargo ? TURN_RAMP_STEP_MS_CARGO : TURN_RAMP_STEP_MS;
+    int  startP = cargo ? TURN_START_PWM_CARGO    : TURN_START_PWM;
+
+    // SPEED_SCALE 보정: drive() PWM 은 ×SPEED_SCALE 이므로, 회전각(= PWM×시간)을 유지하려면
+    // 시간(step·hold)을 /SPEED_SCALE 해야 한다 → 느려져도 같은 90°/180° 를 돈다.
+    // (TURN_SETTLE_MS 는 진동 감쇠 대기라 속도와 무관 → 스케일 안 함.)
+    unsigned long stepDelay = (unsigned long)(stepMs / SPEED_SCALE);
+    unsigned long holdDelay = (unsigned long)(holdMs / SPEED_SCALE);
+
+    // [1] 가속: startP 에서 cruise 까지 선형 증가.
+    for (int i = 1; i <= steps; i++) {
+        float f = (float)i / steps;
+        int pl = startP + (int)((cruiseL - startP) * f);
+        int pr = startP + (int)((cruiseR - startP) * f);
         drive(dirL, pl, dirR, pr);
-        delay(TURN_RAMP_STEP_MS);
+        delay(stepDelay);
     }
     // [2] 정속 — 회전각은 이 구간 시간으로 결정.
     drive(dirL, cruiseL, dirR, cruiseR);
-    delay(holdMs);
-    // [3] 감속: cruise 에서 TURN_START_PWM 까지 선형 감소 → overshoot 완화.
-    for (int i = TURN_RAMP_STEPS - 1; i >= 1; i--) {
-        float f = (float)i / TURN_RAMP_STEPS;
-        int pl = TURN_START_PWM + (int)((cruiseL - TURN_START_PWM) * f);
-        int pr = TURN_START_PWM + (int)((cruiseR - TURN_START_PWM) * f);
+    delay(holdDelay);
+    // [3] 감속: cruise 에서 startP 까지 선형 감소 → overshoot 완화.
+    for (int i = steps - 1; i >= 1; i--) {
+        float f = (float)i / steps;
+        int pl = startP + (int)((cruiseL - startP) * f);
+        int pr = startP + (int)((cruiseR - startP) * f);
         drive(dirL, pl, dirR, pr);
-        delay(TURN_RAMP_STEP_MS);
+        delay(stepDelay);
     }
     Stop();
     delay(TURN_SETTLE_MS);   // 차체 안정화 — 다음 전진/정렬 전에 진동 가라앉힘
+#if DEBUG_TURN_PAUSE_MS > 0
+    delay(DEBUG_TURN_PAUSE_MS);   // [디버그] 회전각 측정용 추가 정지
+#endif
 }
 
 void Controller::TurnHalf() {
@@ -772,7 +788,7 @@ void Controller::PivotTurnLeft()
     // 왼쪽 약, 오른쪽 강 → 좌회전 (왼쪽 후진/오른쪽 전진). 회전각은 holdMs 로 결정.
     int strongPwm           = cargo ? PIVOT_LEFT_STRONG_PWM_CARGO : PIVOT_LEFT_STRONG_PWM;
     int weakPwm             = cargo ? PIVOT_LEFT_WEAK_PWM_CARGO   : PIVOT_LEFT_WEAK_PWM;
-    unsigned long turnDelay = cargo ? PIVOT_DELAY_MS_CARGO        : PIVOT_DELAY_MS;
+    unsigned long turnDelay = cargo ? PIVOT_LEFT_DELAY_MS_CARGO   : PIVOT_LEFT_DELAY_MS;
     RampTurn(BACKWARD, FORWARD, weakPwm, strongPwm, turnDelay);
     if (Serial) Serial.println("Leave Pivot turn Left");
 }
@@ -784,7 +800,7 @@ void Controller::PivotTurnRight()
     // 왼쪽 강, 오른쪽 약 → 우회전 (왼쪽 전진/오른쪽 후진). 회전각은 holdMs 로 결정.
     int strongPwm           = cargo ? PIVOT_RIGHT_STRONG_PWM_CARGO : PIVOT_RIGHT_STRONG_PWM;
     int weakPwm             = cargo ? PIVOT_RIGHT_WEAK_PWM_CARGO   : PIVOT_RIGHT_WEAK_PWM;
-    unsigned long turnDelay = cargo ? PIVOT_DELAY_MS_CARGO         : PIVOT_DELAY_MS;
+    unsigned long turnDelay = cargo ? PIVOT_RIGHT_DELAY_MS_CARGO   : PIVOT_RIGHT_DELAY_MS;
     RampTurn(FORWARD, BACKWARD, strongPwm, weakPwm, turnDelay);
     if (Serial) Serial.println("Leave Pivot turn Right");
 }

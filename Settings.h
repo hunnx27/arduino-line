@@ -127,7 +127,7 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 // 리프터 높이 = 서보 각도. 값은 기계 조립 기준의 오프셋 식으로 표기(실제 각도는 주석).
 //   화물 충돌/안 닿으면 SERVO_UP ↑, 바닥 긁히면 SERVO_DOWN ↓ 식으로 조정.
 #define SERVO_DOWN   (90  - 70)    // 내림 위치 = 20°
-#define SERVO_UP     (180 - 140)   // 올림 위치 = 80°
+#define SERVO_UP     (180 - 150)   // 올림 위치 = 80°
 #define SERVO_DEF    SERVO_DOWN     // 기본(부팅) 위치
 // 부드러운 이동: 목표각으로 한 번에 쏘지 않고 단계적으로 슬루.
 //   SERVO_STEP_DEG = 스텝당 각도 (작을수록 더 부드럽고 느림)
@@ -169,52 +169,64 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 #define TURN_RAMP_STEPS     8
 #define TURN_RAMP_STEP_MS   12
 #define TURN_START_PWM      90
+// 화물 적재 시 가감속(_CARGO).
+//   ★ 부드러움 = STEPS(스텝을 잘게 쪼갬, 증분 작아짐) 에서 나오고,
+//     과회전 = STEP_MS(총 가감속 시간이 길수록 회전을 더 보탬) 에서 나온다. 둘을 분리해 생각.
+//   부드럽게 유지하며 과회전만 줄이려면: STEPS 는 크게 두고 STEP_MS 만 ↓.
+//     (편도 가감속 시간 ≈ STEPS × STEP_MS. 14×10 ≈ 140ms, 양끝 ≈ 280ms.)
+//   화물 회전이 90° 넘게 돌면 STEP_MS_CARGO ↓ (또는 아래 *_DELAY_MS_CARGO ↓).
+// START_PWM_CARGO: 화물이 무거워 출발이 멈칫하면 ↑, 시작이 거칠면 ↓.
+#define TURN_RAMP_STEPS_CARGO     14
+#define TURN_RAMP_STEP_MS_CARGO   10
+#define TURN_START_PWM_CARGO      90
 // 회전 정지 후 차체 흔들림이 가라앉을 때까지 대기(ms). 모든 회전(Pivot/TurnHalf)에 일괄 적용.
 //   ↑ 올림: "회전 직후 라인/RFID 인식이 흔들린다, 헤딩이 들쭉날쭉하다" 싶을 때.
 //   ↓ 내림: "회전 끝나고 너무 뜸 들인다(굼뜨다)" 싶을 때.
 #define TURN_SETTLE_MS      150
 
+// [디버그] 회전각 측정용 — 매 회전(안정화 후) 추가로 이만큼 더 멈춤(ms).
+// 회전→정지 상태로 N초 멈추므로 각도기/눈으로 90°·180° 가 맞는지 측정하기 쉬움.
+// ⚠ 실주행 시 반드시 0 으로 되돌릴 것 (안 그러면 회전마다 멈춤).
+#define DEBUG_TURN_PAUSE_MS  0
 
-// -------------------- 회전 속도(cruise PWM) / 회전각(holdMs) --------------------
-// 위 가감속 프로파일의 "정속 구간" 값들. PWM=속도, DELAY_MS=각도(시간) 임을 기억.
-//
-// TurnHalf — 제자리 180° 회전 (왼쪽 후진 + 오른쪽 전진, 양 바퀴 같은 PWM).
-//   TURNHALF_PWM      : 회전 속도.
-//       ↑ 올림: 빨리 돎(시간 ↓) 단 관성으로 지나칠(overshoot) 위험 ↑.
-//       ↓ 내림: 천천히·정확. "180° 지점을 자꾸 지나친다" 싶으면 PWM 을 낮춰보라.
-//   TURNHALF_DELAY_MS : 회전각(정속 유지 시간). "180° 다 못 돈다"→ ↑ / "더 돈다(현 증상)"→ ↓.
-//       예) 200° 처럼 더 돌면 330→300 식으로 내려 정확히 반바퀴 될 때까지 미세조정.
-// 화물(_CARGO): PWM 을 낮춰(원심력으로 팔레트가 밀려나는 것 방지) 각속도 ↓ →
-//   느려진 만큼 DELAY 를 늘려(↑) 180° 를 다시 채운다.
-#define TURNHALF_PWM             170
-#define TURNHALF_DELAY_MS        330
-#define TURNHALF_PWM_CARGO       150
-#define TURNHALF_DELAY_MS_CARGO  390
 
-// (구 PIVOT_KICK_* 킥스타트는 RampTurn 의 TURN_START_PWM 가감속으로 대체됨)
+// -------------------- 회전별 속도(PWM) / 각도(DELAY_MS) --------------------
+// 회전 단위로 묶음: 각 회전의 [일반]/[화물] · 속도/각도가 한 자리에 모여 있다.
+// 기억:  PWM = 속도 (천천히 돌리려면 ↓) ,  DELAY_MS = 각도 (더 돌리려면 ↑).
+//   "같은 각도로 더 천천히" = PWM ↓ + DELAY ↑ 를 한 쌍으로 함께 조정.
+//   화물(_CARGO)은 무게 때문에 보통 PWM 을 더 낮추고(슬라이드 방지) DELAY 로 각도 보충.
+// (가감속/안정화/디버그 정지는 위 "회전 가감속(공통)" 섹션 — 모든 회전에 공통 적용.)
 
-// Pivot turn — 90° 방향 전환 (한 칸에서 좌/우로 꺾기). 양 바퀴를 반대로 돌리되
-// 강/약 PWM 차이를 둔다 → 회전 중심이 약한 바퀴 쪽으로 치우친 제자리 회전.
-//   STRONG_PWM : 빠른(바깥) 바퀴 속도.   WEAK_PWM : 느린(안쪽) 바퀴 속도.
-//   두 값 차이가 클수록  → 돌면서 앞으로 더 쏠림(완만한 호를 그림).
-//   두 값 차이가 작을수록 → 더 제자리에 가깝게 돎(둘이 같으면 순수 제자리 회전).
-//   좌/우는 기구 편차 보정용으로 살짝 비대칭. 한쪽만 덜/더 꺾이면 그쪽 STRONG 만 미세조정.
-// 화물(_CARGO): PWM ↓(슬라이드 방지) → 느려진 만큼 PIVOT_DELAY_MS_CARGO 로 각도 보충.
-#define PIVOT_LEFT_STRONG_PWM         170   // 좌회전: 오른쪽(바깥) 바퀴
-#define PIVOT_LEFT_WEAK_PWM           90    // 좌회전: 왼쪽(안쪽) 바퀴
-#define PIVOT_LEFT_STRONG_PWM_CARGO   150
-#define PIVOT_LEFT_WEAK_PWM_CARGO     80
 
-#define PIVOT_RIGHT_STRONG_PWM        170   // 우회전: 왼쪽(바깥) 바퀴
-#define PIVOT_RIGHT_WEAK_PWM          90    // 우회전: 오른쪽(안쪽) 바퀴
-#define PIVOT_RIGHT_STRONG_PWM_CARGO  150
-#define PIVOT_RIGHT_WEAK_PWM_CARGO    80
+// ===== TurnHalf : 제자리 180° (왼쪽 후진 + 오른쪽 전진, 양 바퀴 같은 PWM) =====
+//   PWM  ↑ 빨리(관성 overshoot 위험) / ↓ 천천히·정확.
+//   DELAY  "180° 못 채움"→↑ / "넘게 돎"→↓.
+#define TURNHALF_PWM             170   // [일반] 속도
+#define TURNHALF_DELAY_MS        330   // [일반] 각도
+#define TURNHALF_PWM_CARGO       120   // [화물] 속도
+#define TURNHALF_DELAY_MS_CARGO  410   // [화물] 각도
 
-// 회전각(정속 유지 시간). "90° 못 돈다"→ ↑ / "90° 넘게 돈다"→ ↓.
-// 피벗은 정속 구간이 짧아 가감속 비중이 커서, STEPS/STEP_MS 를 바꾸면 특히 민감 —
-// 그 경우 벤치에서 90° 다시 맞출 것.
-#define PIVOT_DELAY_MS                140
-#define PIVOT_DELAY_MS_CARGO          170
+
+// ===== PivotTurnLeft : 90° 좌회전 (왼쪽 후진 + 오른쪽 전진) =====
+//   STRONG=바깥(빠른) 바퀴, WEAK=안쪽(느린) 바퀴.
+//     두 값 차 ↑ → 돌며 앞으로 쏠림(완만한 호) / 차 ↓ → 제자리에 가깝게(같으면 순수 제자리).
+//   DELAY = 90° 각도 ("못 돎"→↑ / "넘게 돎"→↓).
+#define PIVOT_LEFT_STRONG_PWM         170   // [일반] 오른쪽(바깥) 바퀴 속도
+#define PIVOT_LEFT_WEAK_PWM           120   // [일반] 왼쪽(안쪽) 바퀴 속도
+#define PIVOT_LEFT_DELAY_MS           145   // [일반] 각도
+#define PIVOT_LEFT_STRONG_PWM_CARGO   120   // [화물] 오른쪽(바깥) 바퀴 속도
+#define PIVOT_LEFT_WEAK_PWM_CARGO      70   // [화물] 왼쪽(안쪽) 바퀴 속도
+#define PIVOT_LEFT_DELAY_MS_CARGO     225   // [화물] 각도
+
+
+// ===== PivotTurnRight : 90° 우회전 (왼쪽 전진 + 오른쪽 후진) =====
+//   구조는 좌회전과 동일. 좌/우는 기구·모터 편차로 값이 살짝 다를 수 있음(한쪽만 미세조정).
+#define PIVOT_RIGHT_STRONG_PWM        170   // [일반] 왼쪽(바깥) 바퀴 속도
+#define PIVOT_RIGHT_WEAK_PWM          120   // [일반] 오른쪽(안쪽) 바퀴 속도
+#define PIVOT_RIGHT_DELAY_MS          155   // [일반] 각도
+#define PIVOT_RIGHT_STRONG_PWM_CARGO  120   // [화물] 왼쪽(바깥) 바퀴 속도
+#define PIVOT_RIGHT_WEAK_PWM_CARGO     70   // [화물] 오른쪽(안쪽) 바퀴 속도
+#define PIVOT_RIGHT_DELAY_MS_CARGO    230   // [화물] 각도
 
 
 // -------------------- 네비게이션 보조 --------------------
