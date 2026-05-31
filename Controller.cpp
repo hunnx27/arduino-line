@@ -642,8 +642,8 @@ void Controller::Move()
 {
     Stop();
     delay(10);
-    analogWrite(LeftWheelPWM, (int)(140 * SPEED_SCALE));
-    analogWrite(RightWheelPWM, (int)(140 * SPEED_SCALE));
+    analogWrite(LeftWheelPWM,  (int)(140 * _motorCalibL * SPEED_SCALE));
+    analogWrite(RightWheelPWM, (int)(140 * _motorCalibR * SPEED_SCALE));
     delay((unsigned long)(100 / SPEED_SCALE));
 }
 
