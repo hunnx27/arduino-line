@@ -411,11 +411,15 @@ void Controller::ProcessRFIDRead()
         isBusy = true;
         mfrc522.PCD_AntennaOff();
         switch (currentPosition) {
-        case eInitialPosition:
-            if (strRFID.compareTo(s_strRFIDUidForStart) == 0) {
+        case eInitialPosition: {
+            // 출발 조건: 플래그 OFF 면 아무 RFID 나, ON 이면 시작 카드 UID 일치 시에만.
+            bool startOk = (REQUIRE_START_RFID_MATCH == 0) ||
+                           (strRFID.compareTo(s_strRFIDUidForStart) == 0);
+            if (startOk) {
                 // 시작 RFID 위치에서 좌표계 시작 → 네비게이터로 창고까지 자동 이동.
                 // 장애물 우회도 동일 메커니즘으로 처리됨.
                 currentPose = {INIT_START_X, INIT_START_Y, INIT_START_HEADING};
+                PlayMelody();               // 출발 신호 — "도-파-라"
                 navigateTo(WAREHOUSE_X, WAREHOUSE_Y);
                 rotateToHeading(HD_SOUTH);  // 창고에서 도시 방향(+y, row 7 쪽) 으로 정렬
                 LifterUp();
@@ -423,6 +427,7 @@ void Controller::ProcessRFIDRead()
             }
             mfrc522.PCD_AntennaOn();
             break;
+        }
 
         case eWareHousePosition: {
             // 좌표 기반 디스패치 — UID 로 목적지 좌표 찾고 navigateTo 로 왕복.
@@ -809,11 +814,18 @@ void Controller::readData() {
     address += 4;
 }
 
+// 출발 멜로디 — "도-파-라" (C5·F5·A5) 상승 아르페지오.
+// 미션에 따라 아래 음계 표를 참고해 tone() 주파수를 바꿔 쓰면 됨 (C5 옥타브 기준):
+//   도 C5 = 523   레 D5 = 587   미 E5 = 659   파 F5 = 698
+//   솔 G5 = 784   라 A5 = 880   시 B5 = 988   도 C6 = 1047
+// (한 옥타브 ↑ 는 ×2, ↓ 는 ÷2. 예: 도 C4 = 262)
 void Controller::PlayMelody() {
-    tone(pinBuzzer, 440);
-    delay(300);
-    tone(pinBuzzer, 587);
-    delay(300);
+    tone(pinBuzzer, 523);   // 도 C5
+    delay(500);
+    tone(pinBuzzer, 698);   // 파 F5
+    delay(500);
+    tone(pinBuzzer, 880);   // 라 A5
+    delay(500);
     noTone(pinBuzzer);
 }
 

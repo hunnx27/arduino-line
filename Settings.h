@@ -35,6 +35,10 @@
 
 // 시작 RFID UID 카드 식별. 도시 UID 는 CITY_COORDS 참조.
 #define START_RFID_UID "647AB573"
+// 첫 출발 시 RFID 검증 방식.
+//   1 → START_RFID_UID 와 일치하는 시작 카드여야만 출발.
+//   0 → 아무 RFID 나 인식되면 바로 출발 (디버깅/시연용).
+#define REQUIRE_START_RFID_MATCH  0
 
 
 // -------------------- 물류창고 위치 --------------------
@@ -47,7 +51,7 @@
 // 도시는 모두 row 7. UID 빈 문자열인 항목은 미등록 (실 태그 부착 후 채우기).
 // 새 도시 추가 시 lookupCityCoord() 가 자동 매핑.
 static const CityCoord CITY_COORDS[] = {
-    {"",         0, 7},  // Seoul   (col 0)
+    {"647AB573",         0, 7},  // Seoul   (col 0)
     {"",         1, 7},  // Incheon (col 1)
     {"",         2, 7},  // Sejong  (col 2 — 메인 라인. 창고 바로 아래)
     {"148EC573", 3, 7},  // Daejeon (col 3)
