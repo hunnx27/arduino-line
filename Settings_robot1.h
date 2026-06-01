@@ -43,7 +43,7 @@
 
 // -------------------- 물류창고 위치 --------------------
 // col=x, row=y. 메인 라인은 col 2 layout.
-#define WAREHOUSE_X 2
+#define WAREHOUSE_X 3
 #define WAREHOUSE_Y 0
 
 // -------------------- 맵 격리 경계 --------------------
@@ -58,8 +58,8 @@
 static const CityCoord CITY_COORDS[] = {
     {"647AB573",         0, 7},  // Seoul   (col 0)
     {"",         1, 7},  // Incheon (col 1)
-    {"",         2, 7},  // Sejong  (col 2 — 메인 라인. 창고 바로 아래)
-    {"148EC573", 3, 7},  // Daejeon (col 3)
+    {"148EC573",         2, 7},  // Sejong  (col 2 — 메인 라인. 창고 바로 아래)
+    {"", 3, 7},  // Daejeon (col 3)
 };
 static const uint8_t CITY_COORD_COUNT = sizeof(CITY_COORDS) / sizeof(CityCoord);
 
@@ -70,7 +70,7 @@ static const uint8_t CITY_COORD_COUNT = sizeof(CITY_COORDS) / sizeof(CityCoord);
 static const BlockedCell BLOCKED_CELLS[] = {
 
     
-    {2, 3}, {3, 5}, {1, 5}
+    {1, 6}, {3, 6}, {2, 4}
 };
 static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(BlockedCell);
 
