@@ -68,6 +68,8 @@ static const uint8_t CITY_COORD_COUNT = sizeof(CITY_COORDS) / sizeof(CityCoord);
 // 격자 layout 변경 시 같이 수정. 추가는 { {x1,y1}, {x2,y2}, ... } 형식.
 // 런타임 동적 차단(g_dynBlocked)과는 별개 — 컴파일 시 결정되는 영구 차단.
 static const BlockedCell BLOCKED_CELLS[] = {
+
+    
     {2, 3}, {3, 5}, {1, 5}
 };
 static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(BlockedCell);
