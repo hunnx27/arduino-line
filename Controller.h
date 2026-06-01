@@ -215,8 +215,8 @@ public:
     // 현재 그리드 상태(장애물/창고/도시/현재 위치)를 ASCII 맵으로 시리얼 출력.
     void PrintStatusMap();
 
-    // 스택에 있는 칸으로 향하는 방향 비트를 conn 에서 제거 (사이클 방지 + 부모 자동 제외).
-    uint8_t maskCellsOnPath(int8_t x, int8_t y, uint8_t conn);
+    // BFS 최단경로를 _pathX/_pathY 에 채움 (출발칸 제외, 목표 포함). 도달 불가 시 false.
+    bool computeBfsPath(int8_t tx, int8_t ty);
 };
 
 #endif // CONTROLLER_H

@@ -29,16 +29,6 @@
 //        └──────┘    └──────┘      └──────────┘  └──────┘
 
 // === 네비게이션 헬퍼 ===
-static Heading opposite(Heading h) { return (Heading)((h + 2) % 4); }
-
-static int8_t headingDx(Heading h) {
-    switch (h) { case HD_EAST: return 1; case HD_WEST: return -1; default: return 0; }
-}
-// HD_NORTH = row 감소 방향 (사용자 mental model 의 "북쪽" = 격자 위쪽 = row 0 방향)
-static int8_t headingDy(Heading h) {
-    switch (h) { case HD_NORTH: return -1; case HD_SOUTH: return 1; default: return 0; }
-}
-
 static uint8_t lookupConn(int8_t x, int8_t y) {
     // 시작 RFID 셀 — 그리드 외부 한 칸 뒤. 동쪽으로만 진입 가능 (그리드의 (0, 3) 으로).
     if (x == INIT_START_X && y == INIT_START_Y) return CONN_E;
@@ -50,38 +40,6 @@ static uint8_t lookupConn(int8_t x, int8_t y) {
     if (x + 1 < GRID_COLS) conn |= CONN_E;
     if (x - 1 >= 0)        conn |= CONN_W;
     return conn;
-}
-
-// 우선순위:
-//   0) 현재 heading 이 도움 되면 그대로 유지 (불필요한 회전 제거)
-//   1) Y(세로) → X(가로) 직접 방향
-//   2) 직접 방향 막혔으면 perpendicular fallback (장애물 우회용)
-static Heading desiredHeading(int8_t dx, int8_t dy, uint8_t conn, Heading currentHeading) {
-    // 0) 현재 heading 유지 가능하면 우선
-    switch (currentHeading) {
-        case HD_NORTH: if (dy < 0 && (conn & CONN_N)) return HD_NORTH; break;
-        case HD_SOUTH: if (dy > 0 && (conn & CONN_S)) return HD_SOUTH; break;
-        case HD_EAST:  if (dx > 0 && (conn & CONN_E)) return HD_EAST;  break;
-        case HD_WEST:  if (dx < 0 && (conn & CONN_W)) return HD_WEST;  break;
-        default: break;
-    }
-
-    // 1) Y 우선 → X 직접 방향
-    if (dy < 0 && (conn & CONN_N)) return HD_NORTH;
-    if (dy > 0 && (conn & CONN_S)) return HD_SOUTH;
-    if (dx > 0 && (conn & CONN_E)) return HD_EAST;
-    if (dx < 0 && (conn & CONN_W)) return HD_WEST;
-
-    // 2) Perpendicular fallback
-    if (dy != 0) {
-        if (conn & CONN_E) return HD_EAST;
-        if (conn & CONN_W) return HD_WEST;
-    } else if (dx != 0) {
-        if (conn & CONN_N) return HD_NORTH;
-        if (conn & CONN_S) return HD_SOUTH;
-    }
-
-    return (Heading)0xFF;
 }
 
 // === EEPROM 기반 NavLog ===
@@ -238,30 +196,14 @@ static uint8_t maskBlockedNeighbors(int8_t x, int8_t y, uint8_t conn) {
     return conn;
 }
 
-// === 사이클 방지: 방문 카운터 ===
-// 한 navigateTo 안에서 각 칸을 몇 번 거쳤는지 추적. VISIT_LIMIT 도달 시 그 칸 진입 차단.
-// maskCellsOnPath 를 직속 부모만 마스킹으로 완화한 뒤 사이클이 생길 때 끊는 안전망.
-// navigateTo 시작 시 reset, 매 pose 변경 시 increment.
-// VISIT_LIMIT 은 Settings.h 에서 튜닝.
-static uint8_t g_visit[GRID_COLS * GRID_ROWS];
-
-static void resetVisit() {
-    for (uint8_t i = 0; i < (uint8_t)(GRID_COLS * GRID_ROWS); i++) g_visit[i] = 0;
-}
-
-static void incrementVisit(int8_t x, int8_t y) {
-    if (x < 0 || x >= GRID_COLS || y < 0 || y >= GRID_ROWS) return;
-    uint8_t idx = (uint8_t)y * (uint8_t)GRID_COLS + (uint8_t)x;
-    if (g_visit[idx] < 255) g_visit[idx]++;
-}
-
-static uint8_t maskOverVisited(int8_t x, int8_t y, uint8_t conn) {
-    if ((conn & CONN_N) && (y - 1) >= 0          && g_visit[(uint8_t)(y - 1) * GRID_COLS + (uint8_t)x      ] >= VISIT_LIMIT) conn &= ~CONN_N;
-    if ((conn & CONN_S) && (y + 1) < GRID_ROWS   && g_visit[(uint8_t)(y + 1) * GRID_COLS + (uint8_t)x      ] >= VISIT_LIMIT) conn &= ~CONN_S;
-    if ((conn & CONN_E) && (x + 1) < GRID_COLS   && g_visit[(uint8_t)y       * GRID_COLS + (uint8_t)(x + 1)] >= VISIT_LIMIT) conn &= ~CONN_E;
-    if ((conn & CONN_W) && (x - 1) >= 0          && g_visit[(uint8_t)y       * GRID_COLS + (uint8_t)(x - 1)] >= VISIT_LIMIT) conn &= ~CONN_W;
-    return conn;
-}
+// === BFS 최단경로 스크래치 ===
+// navigateTo 는 매 교차로에서 currentPose→목표 의 최단경로(BFS)를 구해 그 경로대로 주행한다.
+// 장애물을 만나면 그 칸을 동적 차단(g_dynBlocked)에 넣고 현재 위치에서 다시 BFS → 즉시 우회.
+// (구 greedy+DFS 백트래킹은 목표 직전 외길이 막히면 맵을 헤매는 한계가 있어 BFS 로 교체.)
+//   g_bfsParent[idx] : 0=미방문, 0xFF=출발칸, 그 외=부모로 가는 CONN_* 방향(역추적용)
+//   g_bfsQueue[]     : BFS 큐 (셀 인덱스 = y*GRID_COLS + x)
+static uint8_t g_bfsParent[GRID_COLS * GRID_ROWS];
+static uint8_t g_bfsQueue[GRID_COLS * GRID_ROWS];
 
 static bool lookupCityCoord(const String& uid, int8_t* outX, int8_t* outY) {
     for (uint8_t i = 0; i < CITY_COORD_COUNT; i++) {
@@ -958,27 +900,73 @@ void Controller::rotateToHeading(Heading target) {
     currentPose.heading = target;
 }
 
-// 직속 부모(스택 직전 칸) 방향만 conn 에서 제거.
-// 즉시 되돌아가는 것만 막고, 더 깊은 경로 칸 마스킹은 maskOverVisited 가 담당.
-// 우회 시 같은 칸을 한 번 더 지나갈 수 있어 짧은 우회 경로가 자연스럽게 선택됨.
-// (VISIT_LIMIT 회 초과 방문 시 그 칸은 자동 차단되어 무한 루프 방지)
-uint8_t Controller::maskCellsOnPath(int8_t x, int8_t y, uint8_t conn) {
-    if (_pathLen < 2) return conn;
-    int8_t ddx = _pathX[_pathLen - 2] - x;
-    int8_t ddy = _pathY[_pathLen - 2] - y;
-    if      (ddy == -1 && ddx == 0) conn &= ~CONN_N;
-    else if (ddy == 1  && ddx == 0) conn &= ~CONN_S;
-    else if (ddx == 1  && ddy == 0) conn &= ~CONN_E;
-    else if (ddx == -1 && ddy == 0) conn &= ~CONN_W;
-    return conn;
+// BFS 로 currentPose → (tx,ty) 최단경로를 _pathX/_pathY 에 채운다 (출발칸 제외, 목표 포함).
+// 도달 불가면 false. currentPose 는 그리드 안(x>=0) 가정 — 시작 패드는 navigateTo 가 선처리.
+//   g_bfsParent[idx]: 0=미방문 / 0xFF=출발칸 / 그 외=자식→부모 방향(CONN_*) 으로 역추적.
+bool Controller::computeBfsPath(int8_t tx, int8_t ty) {
+    const uint8_t CELLS = (uint8_t)(GRID_COLS * GRID_ROWS);
+    for (uint8_t i = 0; i < CELLS; i++) g_bfsParent[i] = 0;
+
+    int8_t sx = currentPose.x, sy = currentPose.y;
+    if (sx == tx && sy == ty) { _pathLen = 0; return true; }
+
+    static const uint8_t DIR[4]  = { CONN_N, CONN_S, CONN_E, CONN_W };
+    static const int8_t  DDX[4]  = { 0, 0, 1, -1 };
+    static const int8_t  DDY[4]  = { -1, 1, 0, 0 };
+    static const uint8_t BACK[4] = { CONN_S, CONN_N, CONN_W, CONN_E };  // 자식→부모 방향(이동의 반대)
+
+    uint8_t head = 0, tail = 0;
+    g_bfsParent[(uint8_t)sy * GRID_COLS + (uint8_t)sx] = 0xFF;
+    g_bfsQueue[tail++] = (uint8_t)sy * GRID_COLS + (uint8_t)sx;
+    bool found = false;
+
+    while (head < tail && !found) {
+        uint8_t idx = g_bfsQueue[head++];
+        int8_t x = (int8_t)(idx % GRID_COLS);
+        int8_t y = (int8_t)(idx / GRID_COLS);
+
+        uint8_t conn = maskBlockedNeighbors(x, y, lookupConn(x, y));
+        if ((conn & CONN_W) && (x - 1 < _navMinX)) conn &= ~CONN_W;     // 맵 격리
+        // 동적 차단 리스트가 가득 찼을 때의 안전망: 직전 막힌 한 방향 임시 제외.
+        if (_blockedAtX == x && _blockedAtY == y) conn &= ~_blockedDirBit;
+
+        for (uint8_t k = 0; k < 4; k++) {
+            if (!(conn & DIR[k])) continue;
+            int8_t nx = x + DDX[k], ny = y + DDY[k];
+            uint8_t nidx = (uint8_t)ny * GRID_COLS + (uint8_t)nx;
+            if (g_bfsParent[nidx] != 0) continue;       // 이미 방문(출발칸 0xFF 포함)
+            g_bfsParent[nidx] = BACK[k];
+            if (nx == tx && ny == ty) { found = true; break; }
+            g_bfsQueue[tail++] = nidx;
+        }
+    }
+    if (!found) return false;
+
+    // 목표 → 출발 역추적 후 뒤집어 _pathX/_pathY 채움 (출발칸 제외).
+    _pathLen = 0;
+    int8_t cx = tx, cy = ty;
+    while (!(cx == sx && cy == sy)) {
+        _pathX[_pathLen] = cx; _pathY[_pathLen] = cy; _pathLen++;
+        uint8_t b = g_bfsParent[(uint8_t)cy * GRID_COLS + (uint8_t)cx];
+        if      (b == CONN_N) cy--;
+        else if (b == CONN_S) cy++;
+        else if (b == CONN_E) cx++;
+        else                  cx--;
+    }
+    for (uint8_t i = 0; i < _pathLen / 2; i++) {
+        int8_t a = _pathX[i]; _pathX[i] = _pathX[_pathLen - 1 - i]; _pathX[_pathLen - 1 - i] = a;
+        a = _pathY[i];        _pathY[i] = _pathY[_pathLen - 1 - i]; _pathY[_pathLen - 1 - i] = a;
+    }
+    return true;
 }
 
-// 좌표 네비게이션 (DFS + 백트래킹).
+// 좌표 네비게이션 (BFS 최단경로).
 //
-// 각 교차로에서 부모/스택 칸/차단 칸을 뺀 남은 방향(fwdConn) 중,
-//   - 목표 방향(desiredHeading) 우선, 없으면 남은 아무 방향으로 탐색하여 push.
-//   - fwdConn == 0 이면 막다른 길 → 그 칸을 영구 차단 등록 후 부모로 물리 후진(pop).
-//   - 스택이 시작칸까지 비면 STUCK → false.
+// 매 교차로에서 currentPose → 목표 최단경로를 computeBfsPath 로 구하고 그 경로대로 주행한다.
+// 주행 중 장애물(DoLineTrace==false)을 만나면 그 칸을 동적 차단에 넣고 break →
+// 바깥 루프가 현재 위치에서 다시 BFS → 즉시 최단 우회로 갈아탄다.
+//   - 경로가 없으면 STUCK → false.
+//   - 시작 패드(그리드 밖, x<0)는 동쪽으로만 진입 가능하므로 BFS 전에 한 칸 선처리.
 bool Controller::navigateTo(int8_t tx, int8_t ty) {
     if (Serial) {
         Serial.print(F("Nav: ("));
@@ -987,163 +975,67 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
         Serial.print(tx); Serial.print(F(",")); Serial.print(ty); Serial.println(F(")"));
     }
 
-    // 임시 차단 정보만 클리어 (동적 차단 리스트 g_dynBlocked 는 유지 — 옵션 2)
     _blockedAtX = -128;
     _blockedAtY = -128;
     _blockedDirBit = 0;
 
-    // 경로 스택 초기화 — 시작 칸 push
-    _pathLen = 0;
-    _pathX[_pathLen] = currentPose.x;
-    _pathY[_pathLen] = currentPose.y;
-    _pathLen++;
-
-    // 사이클 방지용 방문 카운터 초기화 + 시작 칸 카운트
-    resetVisit();
-    incrementVisit(currentPose.x, currentPose.y);
+    // 무한루프 안전망 — 재계획/선처리 반복 횟수 상한.
+    uint16_t guard = 0;
+    const uint16_t GUARD_MAX = (uint16_t)(GRID_COLS * GRID_ROWS) * 4 + 8;
 
     while (currentPose.x != tx || currentPose.y != ty) {
-        int8_t dx = tx - currentPose.x;
-        int8_t dy = ty - currentPose.y;
-
-        // forward 후보: 격자연결 ∩ 차단셀 제외 ∩ VISIT_LIMIT 초과 칸 제외 ∩ 직속 부모 제외
-        uint8_t conn0   = lookupConn(currentPose.x, currentPose.y);
-        uint8_t conn    = maskBlockedNeighbors(currentPose.x, currentPose.y, conn0);
-        conn            = maskOverVisited(currentPose.x, currentPose.y, conn);
-        uint8_t fwdConn = maskCellsOnPath(currentPose.x, currentPose.y, conn);
-
-        // 맵 격리: _navMinX 미만 열로 가는 서쪽 이동 차단.
-        // (로봇2 격리용. 로봇1 은 _navMinX=-128 이라 절대 안 걸림.)
-        if ((fwdConn & CONN_W) && (currentPose.x - 1 < _navMinX)) fwdConn &= ~CONN_W;
-
-        // 직전 장애물 임시 마스킹 (동적 리스트 가득 찼을 때의 안전망)
-        if (_blockedAtX == currentPose.x && _blockedAtY == currentPose.y) {
-            fwdConn &= ~_blockedDirBit;
+        if (++guard > GUARD_MAX) {
+            if (Serial) Serial.println(F("Nav STUCK: guard exceeded."));
+            Stop();
+            return false;
         }
 
-        if (Serial) {
-            Serial.print(F("Eval ("));
-            Serial.print(currentPose.x); Serial.print(F(","));
-            Serial.print(currentPose.y); Serial.print(F(") hd="));
-            Serial.print((uint8_t)currentPose.heading);
-            Serial.print(F(" conn0=0b")); Serial.print(conn0, BIN);
-            Serial.print(F(" afterBlk=0b")); Serial.print(conn, BIN);
-            Serial.print(F(" fwd=0b")); Serial.print(fwdConn, BIN);
-            Serial.print(F(" pathLen=")); Serial.println(_pathLen);
-        }
-        navlogPush(NAVLOG_TAG_EVAL,
-                   (uint8_t)currentPose.x, (uint8_t)currentPose.y,
-                   (uint8_t)currentPose.heading,
-                   conn0, conn, fwdConn, _pathLen);
-
-        if (fwdConn == 0) {
-            // === 막다른 길 — 부모 칸 방향으로 180° 회전 후 한 칸 전진해서 복귀 ===
-            // 한 칸 이동 후 바깥 루프가 새 칸에서 fwdConn 재평가 (봇의 새 heading 기준 정면 판단).
-            //   - 탈출구 있음 → desiredHeading 이 선택해서 진행
-            //   - 여전히 데드엔드 → 다음 iteration 에서 같은 패턴 반복
-            //   - 스택이 비거나 부모가 그리드 밖이면 STUCK
-            if (Serial) {
-                Serial.print(F("Dead-end at ("));
-                Serial.print(currentPose.x); Serial.print(F(","));
-                Serial.print(currentPose.y); Serial.println(F(") — turn + step backtracking"));
-            }
-            navlogPush(NAVLOG_TAG_DEADEND,
-                       (uint8_t)currentPose.x, (uint8_t)currentPose.y,
-                       (uint8_t)currentPose.heading,
-                       0, 0, 0, _pathLen);
-
-            if (_pathLen <= 1) {
-                if (Serial) Serial.println(F("Nav STUCK: start cell is dead-end."));
+        // 시작 패드: 그리드 밖이라 인덱싱 불가 → 동쪽으로 한 칸 진입 후 BFS.
+        if (currentPose.x < 0) {
+            rotateToHeading(HD_EAST);
+            if (!DoLineTrace(1, false)) {
+                if (Serial) Serial.println(F("Nav STUCK: obstacle at start-pad exit."));
                 Stop();
                 return false;
             }
-            int8_t px = _pathX[_pathLen - 2];
-            int8_t py = _pathY[_pathLen - 2];
-            if (px < 0) {
-                if (Serial) Serial.println(F("Nav STUCK: parent is off-grid start pad."));
-                Stop();
-                return false;
-            }
-
-            // 부모 방향 계산 후 회전 → 한 칸 전진
-            int8_t bdx = px - currentPose.x;
-            int8_t bdy = py - currentPose.y;
-            Heading back;
-            if      (bdy == -1) back = HD_NORTH;
-            else if (bdy == 1)  back = HD_SOUTH;
-            else if (bdx == 1)  back = HD_EAST;
-            else                back = HD_WEST;
-            rotateToHeading(back);
-            // 정밀 정렬(reverse-then-forward dance) 조건:
-            //   1) 최종 목표 좌표 도착, 또는
-            //   2) 수직 이동(N/S) 으로 row 0 (창고행) / row 7 (도시행) 도착
-            //      — 가로 라인 위 정렬 필요 (회전/RFID 정확도 확보)
-            bool arriveTarget = (px == tx && py == ty);
-            bool vertArrival  = (headingDy(back) != 0) && (py == 0 || py == 7);
-            bool bprec = arriveTarget || vertArrival;
-            if (!DoLineTrace(1, bprec)) {
-                // 방금 지나온 길에 장애물 — 드문 케이스(움직이는 장애물). 일단 포기.
-                if (Serial) Serial.println(F("Obstacle on backtrack — STUCK."));
-                Stop();
-                return false;
-            }
-
-            // 성공: 현재 칸을 dead-end 로 영구 차단 등록 + 스택 pop + pose 갱신
-            addDynBlockedCell(currentPose.x, currentPose.y);
-            _pathLen--;
-            currentPose.x = px;
-            currentPose.y = py;
-            incrementVisit(currentPose.x, currentPose.y);
-            _blockedAtX = -128;
+            currentPose.x += 1;
             continue;
         }
 
-        // === 전진 방향 결정 ===
-        Heading desired = desiredHeading(dx, dy, fwdConn, currentPose.heading);
-        if ((uint8_t)desired == 0xFF) {
-            // desiredHeading 은 목표 반대축으론 안 가지만, 우회를 위해 남은 비트 중 아무거나 선택.
-            if      (fwdConn & CONN_N) desired = HD_NORTH;
-            else if (fwdConn & CONN_S) desired = HD_SOUTH;
-            else if (fwdConn & CONN_E) desired = HD_EAST;
-            else                       desired = HD_WEST;
+        if (!computeBfsPath(tx, ty)) {
+            if (Serial) Serial.println(F("Nav STUCK: no path (BFS)."));
+            Stop();
+            return false;
         }
+        navlogPush(NAVLOG_TAG_EVAL,
+                   (uint8_t)currentPose.x, (uint8_t)currentPose.y,
+                   (uint8_t)currentPose.heading, 0, 0, 0, _pathLen);
 
-        rotateToHeading(desired);
+        // 계획 경로대로 한 칸씩 주행. 각 칸은 직전 칸과 인접 → dx/dy 는 항상 한 축 ±1.
+        for (uint8_t i = 0; i < _pathLen; i++) {
+            int8_t nx = _pathX[i], ny = _pathY[i];
+            int8_t dx = nx - currentPose.x, dy = ny - currentPose.y;
+            Heading d = (dy == -1) ? HD_NORTH : (dy == 1) ? HD_SOUTH :
+                        (dx == 1)  ? HD_EAST  : HD_WEST;
+            rotateToHeading(d);
 
-        int8_t newX = currentPose.x + headingDx(desired);
-        int8_t newY = currentPose.y + headingDy(desired);
-        // 정밀 정렬 조건:
-        //   1) 최종 목표 좌표 도착, 또는
-        //   2) 수직 이동(N/S) 으로 row 0 (창고행) / row 7 (도시행) 도착
-        //      — 가로 라인 위 정렬 필요 (회전/RFID 정확도 확보)
-        bool arriveTarget = (newX == tx && newY == ty);
-        bool vertArrival  = (headingDy(desired) != 0) && (newY == 0 || newY == 7);
-        bool precise = arriveTarget || vertArrival;
+            // 정밀 정렬: 최종 목표 도착, 또는 수직 이동으로 row 0(창고행)/row 7(도시행) 도착 시.
+            bool arriveTarget = (nx == tx && ny == ty);
+            bool vertArrival  = (dy != 0) && (ny == 0 || ny == 7);
+            bool precise = arriveTarget || vertArrival;
 
-        if (DoLineTrace(1, precise)) {
-            // 성공 — pose 갱신, 새 칸 push, 방문 카운트 증가, 임시 마스킹 해제
-            _blockedAtX = -128;
-            currentPose.x = newX;
-            currentPose.y = newY;
-            incrementVisit(currentPose.x, currentPose.y);
-            if (_pathLen < NAV_PATH_MAX) {
-                _pathX[_pathLen] = currentPose.x;
-                _pathY[_pathLen] = currentPose.y;
-                _pathLen++;
+            if (DoLineTrace(1, precise)) {
+                currentPose.x = nx;
+                currentPose.y = ny;
+                _blockedAtX = -128;
             } else {
-                if (Serial) Serial.println(F("Path stack full — push skipped."));
-            }
-        } else {
-            // 장애물 — 앞 칸을 영구 차단, 임시 마스킹 기록. pose 유지, 다음 iteration 이 재계산.
-            addDynBlockedCell(newX, newY);
-            _blockedAtX = currentPose.x;
-            _blockedAtY = currentPose.y;
-            switch (desired) {
-                case HD_NORTH: _blockedDirBit = CONN_N; break;
-                case HD_EAST:  _blockedDirBit = CONN_E; break;
-                case HD_SOUTH: _blockedDirBit = CONN_S; break;
-                case HD_WEST:  _blockedDirBit = CONN_W; break;
-                default: break;
+                // 장애물 — 그 칸 영구 차단 + 임시 마스킹 기록, break 후 현재 위치에서 재계획.
+                addDynBlockedCell(nx, ny);
+                _blockedAtX = currentPose.x;
+                _blockedAtY = currentPose.y;
+                _blockedDirBit = (d == HD_NORTH) ? CONN_N : (d == HD_EAST) ? CONN_E :
+                                 (d == HD_SOUTH) ? CONN_S : CONN_W;
+                break;
             }
         }
     }
