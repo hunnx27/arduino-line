@@ -4,20 +4,20 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Build / Upload
 
-This is an **Arduino sketch** targeting **Arduino Uno (ATmega328P, 16 MHz)** — there is no `Makefile`, `package.json`, or test harness. Builds happen via the Arduino IDE or `arduino-cli`:
+This is an **Arduino sketch** targeting **Arduino Nano (ATmega328P, 16 MHz)** — there is no `Makefile`, `package.json`, or test harness. Builds happen via the Arduino IDE or `arduino-cli`:
 
 ```bash
 # Compile
-arduino-cli compile --fqbn arduino:avr:uno .
+arduino-cli compile --fqbn arduino:avr:nano:cpu=atmega328old .
 
-# Upload (replace port)
-arduino-cli upload  --fqbn arduino:avr:uno -p /dev/cu.usbmodemXXXX .
+# Upload (replace port) — Nano uses the old bootloader variant
+arduino-cli upload  --fqbn arduino:avr:nano:cpu=atmega328old -p /dev/cu.usbmodemXXXX .
 
 # Serial monitor at 9600 baud — matches Serial.begin in setup()
 arduino-cli monitor -p /dev/cu.usbmodemXXXX -c baudrate=9600
 ```
 
-The sketch folder name (`NavigateObstacle`) must match the `.ino` filename — do not rename one without the other.
+The sketch folder name (`arduino-line`) must match the `.ino` filename (`arduino-line.ino`) — do not rename one without the other.
 
 Required Arduino libraries (install via Library Manager): **MFRC522**, **Servo**, plus the bundled **SPI** and **EEPROM**.
 
@@ -25,11 +25,13 @@ Required Arduino libraries (install via Library Manager): **MFRC522**, **Servo**
 
 ## Architecture
 
-Three files form a single state-machine-driven robot controller:
+Five files form a single state-machine-driven robot controller:
 
-- **`NavigateObstacle.ino`** — Arduino entry point. Instantiates one global `Controller ctrlr`, calls `ctrlr.init()` in `setup()`, and `ctrlr.RunOnce()` every `loop()` iteration. All logic lives in `Controller`.
-- **`Controller.h`** — pin map, tunables (`SERVO_UP/DOWN`, `LINEDETECT_THRESHOLD_MIN`, `OBSTACLE_THRESHOLD`, `Power`, P-controller `Kp`/`maxCorrection`), the `POSITION` / `APP_STATE` enums, and the city-RFID UID strings.
+- **`arduino-line.ino`** — Arduino entry point. Instantiates one global `Controller ctrlr`, calls `ctrlr.init()` in `setup()`, and `ctrlr.RunOnce()` every `loop()` iteration. All logic lives in `Controller`.
+- **`Controller.h`** — pin map, the `POSITION` / `APP_STATE` enums, city-RFID UID strings, and forward declarations. Tunables have moved to `Settings_robot*.h`.
 - **`Controller.cpp`** — full implementation.
+- **`Settings.h`** — 27-line `ROBOT_ID` selector: `#define ROBOT_ID 1` then `#include "Settings_robot1.h"` or `"Settings_robot2.h"`. Switch robots by changing `ROBOT_ID` here or passing `-DROBOT_ID=2` as a build flag.
+- **`Settings_robot1.h`** / **`Settings_robot2.h`** — all tunables (speeds, PID, servo angles, turn delays, thresholds, map coordinates). Edit the file for your robot.
 
 ### Runtime state machine
 
@@ -43,10 +45,14 @@ eInitialPosition ──(Start tag)──► eWareHousePosition ──(City tag, 
 
 ### Coordinate-based navigation
 
-A 4-column × 8-row **full grid** (`col 0~3, row 0~7`, every cell connected to its 4 cardinal neighbors). Warehouse at `WAREHOUSE_X / WAREHOUSE_Y` (default `(3, 0)`), start RFID at `INIT_START_X / INIT_START_Y` (default `(0, 3)` heading `INIT_START_HEADING = HD_EAST`), cities along `row 7`. Bot tracks `currentPose = {x, y, heading}` and at each crossing decides the next direction by:
+**Robot 1**: 4-column × 8-row grid (`col 0~3, row 0~7`). Warehouse default `(2, 0)`. Start RFID at `(-1, 3)` heading `HD_EAST` (one cell off-grid west of column 0). Cities along `row 7`, cols 0–3.
+
+**Robot 2**: 8-column × 8-row grid (`col 0~7`, `GRID_COLS=8`). Robot 2 starts at `(-1, INIT_START_Y)` heading east, transits map 1 (cols 0–3) to reach its warehouse in cols 4–7, then is confined to cols ≥ 4 via `NAV_MIN_X=4` (activated after the initial transit). Cities along `row 7`, cols 4–7 (대구/광주/춘천/제주).
+
+Both robots: every cell connected to its 4 cardinal neighbors. Bot tracks `currentPose = {x, y, heading}` and at each crossing decides the next direction by:
 
 1. Compute `(dx, dy)` to target.
-2. Look up the current crossing's `conn` bitmask via `lookupConn(x, y)` — programmatic, returns N|E|S|W minus any grid-boundary directions (controlled by `GRID_COLS=4`, `GRID_ROWS=8`).
+2. Look up the current crossing's `conn` bitmask via `lookupConn(x, y)` — programmatic, returns N|E|S|W minus any grid-boundary directions (controlled by `GRID_COLS`, `GRID_ROWS`).
 3. **Y-first greedy + perpendicular fallback**: prefer N/S when `dy != 0` and that direction is in `conn`; otherwise E/W if `dx != 0`. If the direct direction is masked (e.g., obstacle blocked it) **and the target lies straight along that axis (dx=0 or dy=0)**, fall back to whichever perpendicular direction (E/W or N/S) is available so the bot can detour and return to the target column/row later.
 4. `rotateToHeading()` issues a `PivotTurn*`/`TurnHalf` if needed, then `DoLineTrace(1)` advances one crossing.
 
@@ -68,8 +74,8 @@ The `eTargetPosition` enum value is unused; `currentPosition` only ever holds `e
 
 `DoLineTrace(targetCount)` loops on `LineTracer()` until `nLineCounter == targetCount` crossings have been counted, while polling `CheckObstacle()` between iterations.
 
-- `LineTrace()` runs a **P-controller** (`Kp`, `maxCorrection`) over normalized bottom-sensor readings. Base speed drops by 20 when `currentPosition == eWareHousePosition` (carrying a payload).
-- A "crossing" = both bottom sensors simultaneously read above `LINEDETECT_THRESHOLD_MIN` (730). `bSignalHigh` debounces so one physical crossing increments `nLineCounter` exactly once.
+- `LineTrace()` runs a **PD-controller** (`PID_KP`, `PID_KD`, `PID_MAX_CORRECTION`) over normalized bottom-sensor readings. Base speed uses `MOTOR_POWER` (normal) or `MOTOR_POWER_CARGO` (payload) from `Settings_robot*.h`. Pre-crossing approach deceleration and pass deceleration are also configurable there.
+- A "crossing" = both bottom sensors simultaneously read above `LINEDETECT_NORM_MIN` (normalized 0–1000 scale, default 700). `bSignalHigh` debounces so one physical crossing increments `nLineCounter` exactly once.
 - On reaching `targetCount`, `LineTracer()` does a deliberate **reverse-then-forward re-alignment**: back up ~400 ms to fully clear the line, then creep forward at reduced power until both sensors hit the line again. Tweak the `delay(400)` in `LineTracer` if the bot under- or over-shoots realignment.
 
 ### Obstacle bypass
@@ -96,7 +102,7 @@ Because `DoLineTrace` recurses into itself during the bypass, **don't add state 
 | +8     | float   | `_motorCalibR`   | Right motor PWM multiplier (drift compensation)  |
 | +12    | float   | `_motorCalibL`   | Left motor PWM multiplier                        |
 
-These are written by a **separate calibration sketch** (not in this repo) — flashing this sketch does not overwrite them, but flashing a stock sketch can. `normalizeLeft/Right()` maps raw analog reads to a 0–1000 scale using these, and `drive()` multiplies PWM output by the calib floats, so a fresh board with zeroed EEPROM will not move correctly.
+These are written by the `MotorCalibration/` sketch in this repo. The `MotorCalibration/` folder also has a `Settings.h` / `Settings_robot1.h` / `Settings_robot2.h` split (same `ROBOT_ID` selector pattern) holding `CALIB_R` / `CALIB_L` constants for the calibration routine. Flashing the main sketch does not overwrite EEPROM calibration, but flashing a stock sketch can. `normalizeLeft/Right()` maps raw analog reads to a 0–1000 scale using these values, and `drive()` multiplies PWM output by the calib floats, so a fresh board with zeroed EEPROM will not move correctly.
 
 ### Hardware pin map (from `Controller.h`)
 
