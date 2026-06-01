@@ -2,7 +2,7 @@
 #define SETTINGS_ROBOT2_H
 
 // =====================================================================
-// Settings.h — 모든 튜닝 가능 상수 모음.
+// Settings_robot2.h — 로봇2 튜닝 가능 상수 모음 (맵2, col 4~7).
 // 거동 조정은 여기서. 코드 로직 수정 없이 값만 바꾸고 재컴파일/업로드.
 //
 // 포함 순서 (Controller.h 안):
@@ -27,8 +27,8 @@
 
 
 // -------------------- 출발지 (시작 RFID) 위치 --------------------
-// 시작 RFID 패드. 격자 외부 한 칸 뒤 (x = -1). 첫 forward 가 (0, 3) 진입.
-// lookupConn 안에 (-1, 3) → CONN_E 특수 케이스 정의돼 있음.
+// 시작 RFID 패드. 격자 외부 한 칸 뒤 (x = -1). 첫 forward 가 (0, INIT_START_Y) 진입.
+// lookupConn 이 (INIT_START_X, INIT_START_Y) → CONN_E 특수 케이스로 처리.
 #define INIT_START_X        -1
 #define INIT_START_Y         3   // TODO: 로봇2 출발 행 — 현장 측정값으로 교체 (로봇1 과 다른 행)
 #define INIT_START_HEADING  HD_EAST   // ← Heading enum 이 먼저 정의돼 있어야 함
@@ -42,7 +42,7 @@
 
 
 // -------------------- 물류창고 위치 --------------------
-// col=x, row=y. 메인 라인은 col 2 layout.
+// col=x, row=y. 로봇2 창고는 맵2(col 4~7) 안.
 #define WAREHOUSE_X 6   // TODO: 로봇2 창고 열 (4~7 중 하나) — 현장값으로 교체
 #define WAREHOUSE_Y 0
 

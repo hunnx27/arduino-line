@@ -148,7 +148,8 @@ private:
     // DFS 백트래킹용 경로 스택. navigateTo 시작 시 currentPose 를 push 하고,
     // 한 칸 전진할 때마다 push, 막다른 길에서 pop 하며 부모 칸으로 물리 후진.
     // 동시에 사이클 방지 — 이미 스택에 있는 칸 방향은 forward 후보에서 제외.
-    // 4×8 그리드 단순 경로 최대 32 + 그리드 밖 시작 1 = 33. 여유로 34.
+    // 단순 경로 최대 GRID_COLS*GRID_ROWS + 그리드 밖 시작 1 + 여유 1.
+    // 로봇1(4×8)=34, 로봇2(8×8)=66. uint8_t 범위 내.
     static const uint8_t NAV_PATH_MAX = GRID_COLS * GRID_ROWS + 2;  // 로봇1:34, 로봇2:66
     int8_t _pathX[NAV_PATH_MAX];
     int8_t _pathY[NAV_PATH_MAX];
