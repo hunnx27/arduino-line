@@ -251,10 +251,6 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 
 
 // -------------------- 네비게이션 보조 --------------------
-// 한 navigateTo 안에서 각 칸 최대 방문 횟수 (사이클 방지).
-// 초과 시 그 칸 진입 차단 → 자연스럽게 데드엔드 처리.
-#define VISIT_LIMIT 2
-
 // 동적 차단 셀(g_dynBlocked) 최대 저장 개수. 부팅마다 RAM 리셋.
 #define MAX_DYN_BLOCKED 8
 

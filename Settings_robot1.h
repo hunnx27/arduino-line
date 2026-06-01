@@ -43,7 +43,7 @@
 
 // -------------------- 물류창고 위치 --------------------
 // col=x, row=y. 메인 라인은 col 2 layout.
-#define WAREHOUSE_X 3
+#define WAREHOUSE_X 2
 #define WAREHOUSE_Y 0
 
 // -------------------- 맵 격리 경계 --------------------
@@ -56,8 +56,8 @@
 // 도시는 모두 row 7. UID 빈 문자열인 항목은 미등록 (실 태그 부착 후 채우기).
 // 새 도시 추가 시 lookupCityCoord() 가 자동 매핑.
 static const CityCoord CITY_COORDS[] = {
-    {"647AB573",         0, 7},  // Seoul   (col 0)
-    {"",         1, 7},  // Incheon (col 1)
+    {"",         0, 7},  // Seoul   (col 0)
+    {"647AB573",         1, 7},  // Incheon (col 1)
     {"148EC573",         2, 7},  // Sejong  (col 2 — 메인 라인. 창고 바로 아래)
     {"", 3, 7},  // Daejeon (col 3)
 };
@@ -70,7 +70,7 @@ static const uint8_t CITY_COORD_COUNT = sizeof(CITY_COORDS) / sizeof(CityCoord);
 static const BlockedCell BLOCKED_CELLS[] = {
 
     
-    {1, 6}, {3, 6}, {2, 4}
+    {2, 3}, {1, 5}, {3, 5}
 };
 static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(BlockedCell);
 
@@ -251,10 +251,6 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 
 
 // -------------------- 네비게이션 보조 --------------------
-// 한 navigateTo 안에서 각 칸 최대 방문 횟수 (사이클 방지).
-// 초과 시 그 칸 진입 차단 → 자연스럽게 데드엔드 처리.
-#define VISIT_LIMIT 2
-
 // 동적 차단 셀(g_dynBlocked) 최대 저장 개수. 부팅마다 RAM 리셋.
 #define MAX_DYN_BLOCKED 8
 

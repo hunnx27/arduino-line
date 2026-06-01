@@ -57,7 +57,6 @@ static uint8_t lookupConn(int8_t x, int8_t y) {
 #define NAVLOG_COUNT_ADDR (NAVLOG_HEAD_ADDR + 1)
 
 #define NAVLOG_TAG_EVAL     0x01
-#define NAVLOG_TAG_DEADEND  0x02
 #define NAVLOG_TAG_DYNBLOCK 0x03
 
 static void navlogPush(uint8_t tag,
@@ -125,13 +124,6 @@ static void navlogDump() {
                 Serial.print(F(" conn0=0b")); Serial.print(b4, BIN);
                 Serial.print(F(" afterBlk=0b")); Serial.print(b5, BIN);
                 Serial.print(F(" fwd=0b")); Serial.print(b6, BIN);
-                Serial.print(F(" pathLen=")); Serial.println(b7);
-                break;
-            case NAVLOG_TAG_DEADEND:
-                Serial.print(F("DeadEnd ("));
-                Serial.print(x); Serial.print(F(","));
-                Serial.print(y); Serial.print(F(") hd="));
-                Serial.print(b3);
                 Serial.print(F(" pathLen=")); Serial.println(b7);
                 break;
             case NAVLOG_TAG_DYNBLOCK:
