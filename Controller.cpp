@@ -438,6 +438,7 @@ void Controller::ProcessRFIDRead()
                 currentPose = {INIT_START_X, INIT_START_Y, INIT_START_HEADING};
                 PlayMelody();               // 출발 신호 — "도-파-라"
                 navigateTo(WAREHOUSE_X, WAREHOUSE_Y);
+                _navMinX = NAV_MIN_X;       // 횡단 완료 → 맵 격리 활성화 (로봇2: cols ≥4 고정)
                 rotateToHeading(HD_SOUTH);  // 창고에서 도시 방향(+y, row 7 쪽) 으로 정렬
                 LifterUp();
                 currentPosition = eWareHousePosition;
@@ -923,6 +924,10 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
         uint8_t conn    = maskBlockedNeighbors(currentPose.x, currentPose.y, conn0);
         conn            = maskOverVisited(currentPose.x, currentPose.y, conn);
         uint8_t fwdConn = maskCellsOnPath(currentPose.x, currentPose.y, conn);
+
+        // 맵 격리: _navMinX 미만 열로 가는 서쪽 이동 차단.
+        // (로봇2 격리용. 로봇1 은 _navMinX=-128 이라 절대 안 걸림.)
+        if ((fwdConn & CONN_W) && (currentPose.x - 1 < _navMinX)) fwdConn &= ~CONN_W;
 
         // 직전 장애물 임시 마스킹 (동적 리스트 가득 찼을 때의 안전망)
         if (_blockedAtX == currentPose.x && _blockedAtY == currentPose.y) {

@@ -141,6 +141,9 @@ private:
     int8_t _blockedAtX = -128;              // 직전에 장애물로 막힌 좌표 (-128 = 없음)
     int8_t _blockedAtY = -128;
     uint8_t _blockedDirBit = 0;             // 막힌 방향의 CONN_* 비트
+    // 맵 격리 경계: 이 열 미만으로 서쪽 이동 금지. 부팅 시 무제한(-128),
+    // eInitialPosition 최초 창고 도착 후 NAV_MIN_X 로 설정 (로봇2=4, 로봇1=-128 무효).
+    int8_t _navMinX = -128;
 
     // DFS 백트래킹용 경로 스택. navigateTo 시작 시 currentPose 를 push 하고,
     // 한 칸 전진할 때마다 push, 막다른 길에서 pop 하며 부모 칸으로 물리 후진.
