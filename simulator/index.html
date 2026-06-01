@@ -382,14 +382,15 @@ function App() {
   const [cityIdx, setCityIdx] = useState(0);
   const [liveObs, setLiveObs] = useState([]);     // 동적 장애물 (진입 시 발각)
   const [staticObs, setStaticObs] = useState(() => ROBOTS[1].blocked.map(b => ({ ...b }))); // 고정 장애물 (계획 시 이미 앎)
-  const [editTarget, setEditTarget] = useState('dyn');   // 클릭 시 놓을 것: 'dyn' | 'static'
+  const [warehouse, setWarehouse] = useState(() => ({ ...ROBOTS[1].warehouse }));   // 편집 가능한 창고 위치
+  const [editTarget, setEditTarget] = useState('dyn');   // 클릭 시 놓을 것: 'dyn' | 'static' | 'wh'
   const [frameIdx, setFrameIdx] = useState(0);
   const [playing, setPlaying] = useState(false);
   const [speed, setSpeed] = useState(350);
   const [mode, setMode] = useState('greedy');     // 'greedy' | 'bfs'
 
-  // cfg.blocked 를 편집 가능한 staticObs 로 치환한 유효 설정
-  const cfg = useMemo(() => ({ ...ROBOTS[robotId], blocked: staticObs }), [robotId, staticObs]);
+  // cfg.blocked / cfg.warehouse 를 편집 가능한 state 로 치환한 유효 설정
+  const cfg = useMemo(() => ({ ...ROBOTS[robotId], blocked: staticObs, warehouse }), [robotId, staticObs, warehouse]);
 
   const { frames, summary } = useMemo(
     () => simulate(cfg, cityIdx, liveObs, mode),
@@ -409,14 +410,15 @@ function App() {
     return { greedy: tally('greedy'), bfs: tally('bfs') };
   }, [cfg, cityIdx, liveObs]);
 
-  // 로봇 바꾸면 그 로봇 기본 고정장애물로 복원 + 동적 제거 + 도시 초기화
+  // 로봇 바꾸면 그 로봇 기본 고정장애물/창고로 복원 + 동적 제거 + 도시 초기화
   useEffect(() => {
     setStaticObs(ROBOTS[robotId].blocked.map(b => ({ ...b })));
+    setWarehouse({ ...ROBOTS[robotId].warehouse });
     setLiveObs([]); setCityIdx(0);
   }, [robotId]);
 
-  // 도시/장애물/모드 바꾸면 애니메이션 리셋
-  useEffect(() => { setFrameIdx(0); setPlaying(false); }, [robotId, cityIdx, liveObs, staticObs, mode]);
+  // 도시/장애물/창고/모드 바꾸면 애니메이션 리셋
+  useEffect(() => { setFrameIdx(0); setPlaying(false); }, [robotId, cityIdx, liveObs, staticObs, warehouse, mode]);
 
   useEffect(() => {
     if (!playing) return;
@@ -439,12 +441,18 @@ function App() {
   }, [frameIdx, frames]);
 
   const toggleObs = useCallback((x, y) => {
-    // 창고/도시/시작/그리드밖 위에는 못 놓음
-    if (x < 0) return;
-    if (x === cfg.warehouse.x && y === cfg.warehouse.y) return;
-    if (cfg.cities.some(c => c.x === x && c.y === y)) return;
+    if (x < 0) return;                                         // 그리드 밖
+    if (cfg.cities.some(c => c.x === x && c.y === y)) return;  // 도시 위 금지
     const has = (arr) => arr.some(o => o.x === x && o.y === y);
     const drop = (arr) => arr.filter(o => !(o.x === x && o.y === y));
+    if (editTarget === 'wh') {
+      // 창고 이동 — 그 칸의 장애물은 치우고 창고만 놓음
+      setStaticObs(prev => drop(prev));
+      setLiveObs(prev => drop(prev));
+      setWarehouse({ x, y });
+      return;
+    }
+    if (x === cfg.warehouse.x && y === cfg.warehouse.y) return; // 창고 위 장애물 금지
     if (editTarget === 'static') {
       setLiveObs(prev => drop(prev));   // 한 칸은 한 종류만
       setStaticObs(prev => has(prev) ? drop(prev) : [...prev, { x, y }]);
@@ -520,24 +528,30 @@ function App() {
           </div>
 
           <div>
-            <label className="lbl">장애물 편집 — 클릭 시 놓을 것</label>
+            <label className="lbl">맵 편집 — 클릭 시 놓을 것</label>
             <div className="row">
               <button className={editTarget === 'dyn' ? 'active' : ''} onClick={() => setEditTarget('dyn')}>
-                ⚠ 동적 (진입 시 발각)
+                ⚠ 동적 장애물
               </button>
               <button className={editTarget === 'static' ? 'active' : ''} onClick={() => setEditTarget('static')}>
-                ✕ 고정 (계획 시 이미 앎)
+                ✕ 고정 장애물
+              </button>
+              <button className={editTarget === 'wh' ? 'active' : ''} onClick={() => setEditTarget('wh')}>
+                🏠 창고 이동
               </button>
             </div>
             <div className="sub" style={{ margin: '6px 0 0' }}>
               {editTarget === 'static'
                 ? '고정 장애물 = 펌웨어 BLOCKED_CELLS. 플래너가 미리 알고 우회 (회전수에 반영).'
+                : editTarget === 'wh'
+                ? `창고 = 출발/복귀 지점. 빈 칸 클릭 시 이동. 현재 (${warehouse.x},${warehouse.y}).`
                 : '동적 장애물 = IR 로 그 칸 진입 직전 발각 → 차단 후 재계획.'}
             </div>
             <div className="row" style={{ marginTop: 8 }}>
               {liveObs.length > 0 && <button onClick={() => setLiveObs([])}>동적 전체 제거</button>}
               <button onClick={() => setStaticObs([])}>고정 전체 제거</button>
               <button onClick={() => setStaticObs(ROBOTS[robotId].blocked.map(b => ({ ...b })))}>고정 기본값 복원</button>
+              <button onClick={() => setWarehouse({ ...ROBOTS[robotId].warehouse })}>창고 기본값 복원</button>
             </div>
           </div>
 
