@@ -210,6 +210,11 @@ public:
     bool navigateTo(int8_t tx, int8_t ty);
     void rotateToHeading(Heading target);
 
+    // 시리얼 명령 폴링 — 창고 유휴(다음 RFID 대기) 중에만 RunOnce 에서 호출됨.
+    void HandleSerialCommand();
+    // 현재 그리드 상태(장애물/창고/도시/현재 위치)를 ASCII 맵으로 시리얼 출력.
+    void PrintStatusMap();
+
     // 스택에 있는 칸으로 향하는 방향 비트를 conn 에서 제거 (사이클 방지 + 부모 자동 제외).
     uint8_t maskCellsOnPath(int8_t x, int8_t y, uint8_t conn);
 };

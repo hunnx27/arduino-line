@@ -17,7 +17,7 @@
 // -------------------- 전체 속도 스케일 --------------------
 // 1.0 = 원래 속도. PWM 은 이 비율만큼 줄고, 각도/거리 유지 delay 는 1/SPEED_SCALE 배.
 // 권장 0.5 ~ 1.0. 0.5 미만은 정지마찰로 모터 안 돌 수 있음.
-#define SPEED_SCALE 1.1f
+#define SPEED_SCALE 1.0f
 
 
 // -------------------- 그리드 크기 --------------------
@@ -30,7 +30,7 @@
 // 시작 RFID 패드. 격자 외부 한 칸 뒤 (x = -1). 첫 forward 가 (0, INIT_START_Y) 진입.
 // lookupConn 이 (INIT_START_X, INIT_START_Y) → CONN_E 특수 케이스로 처리.
 #define INIT_START_X        -1
-#define INIT_START_Y         3   // TODO: 로봇2 출발 행 — 현장 측정값으로 교체 (로봇1 과 다른 행)
+#define INIT_START_Y         2   // TODO: 로봇2 출발 행 — 현장 측정값으로 교체 (로봇1 과 다른 행)
 #define INIT_START_HEADING  HD_EAST   // ← Heading enum 이 먼저 정의돼 있어야 함
 
 // 시작 RFID UID 카드 식별. 도시 UID 는 CITY_COORDS 참조.
@@ -43,7 +43,7 @@
 
 // -------------------- 물류창고 위치 --------------------
 // col=x, row=y. 로봇2 창고는 맵2(col 4~7) 안.
-#define WAREHOUSE_X 6   // TODO: 로봇2 창고 열 (4~7 중 하나) — 현장값으로 교체
+#define WAREHOUSE_X 4+1   // TODO: 로봇2 창고 열 (4~7 중 하나) — 현장값으로 교체
 #define WAREHOUSE_Y 0
 
 // -------------------- 맵 격리 경계 --------------------
@@ -57,8 +57,8 @@
 // 새 도시 추가 시 lookupCityCoord() 가 자동 매핑.
 static const CityCoord CITY_COORDS[] = {
     {"", 4, 7},  // 대구 Daegu     (col 4) — TODO: 실 RFID UID
-    {"", 5, 7},  // 광주 Gwangju   (col 5) — TODO: 실 RFID UID
-    {"", 6, 7},  // 춘천 Chuncheon (col 6) — TODO: 실 RFID UID
+    {"647AB573", 5, 7},  // 광주 Gwangju   (col 5) — TODO: 실 RFID UID
+    {"148EC573", 6, 7},  // 춘천 Chuncheon (col 6) — TODO: 실 RFID UID
     {"", 7, 7},  // 제주 Jeju      (col 7) — TODO: 실 RFID UID
 };
 static const uint8_t CITY_COORD_COUNT = sizeof(CITY_COORDS) / sizeof(CityCoord);
@@ -70,7 +70,7 @@ static const uint8_t CITY_COORD_COUNT = sizeof(CITY_COORDS) / sizeof(CityCoord);
 static const BlockedCell BLOCKED_CELLS[] = {
     // 맵1 {2,3}{3,5}{1,5} 를 +4 열 시프트한 기본값. TODO: 맵2 실제 장애물로 확인/교체.
     // (횡단 통로 행에 맵1 장애물이 걸리면 그 좌표도 여기 추가.)
-    {6, 3}, {7, 5}, {5, 5}
+    {4+2, 3}, {4+3, 5}, {4+1, 5}
 };
 static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(BlockedCell);
 

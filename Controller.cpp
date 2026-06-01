@@ -311,10 +311,89 @@ void Controller::init() {
 
 void Controller::RunOnce()
 {
+    // 시리얼 명령 폴링. 주행 중엔 navigateTo 가 블로킹하므로 이 루프가 돌지 않고,
+    // 창고에 도착해 다음 RFID 를 기다리는 유휴 상태에서만 입력이 처리된다 —
+    // 즉 "창고 도착 후 상태 확인" 타이밍과 정확히 일치.
+    HandleSerialCommand();
+
     if (state == STATE_NONE) {
     } else if (state == STATE_RFIDREAD) {
         ProcessRFIDRead();
     }
+}
+
+// 시리얼로 한 글자 명령을 받아 처리. 버퍼는 모두 비운다.
+//   m / p : 장애물 맵 출력
+//   그 외  : 사용법 안내
+void Controller::HandleSerialCommand()
+{
+    if (!Serial || Serial.available() <= 0) return;
+
+    char cmd = (char)Serial.read();
+    while (Serial.available() > 0) Serial.read();  // 나머지(개행 등) 비우기
+
+    switch (cmd) {
+    case 'm': case 'M':
+    case 'p': case 'P':
+        PrintStatusMap();
+        break;
+    case '\r': case '\n': case ' ':
+        break;  // 무시
+    default:
+        Serial.println(F("cmd: m=map/status"));
+        break;
+    }
+}
+
+// 현재 그리드를 ASCII 맵으로 출력.
+//   @ = 현재 위치   # = 창고   ! = 동적 장애물(IR 감지)   x = 정적 장애물
+//   C = 도시        . = 빈 교차로   : = 격리 경계 서쪽(진입 금지)
+void Controller::PrintStatusMap()
+{
+    Serial.println();
+    Serial.print(F("=== STATUS  pose=("));
+    Serial.print(currentPose.x); Serial.print(F(","));
+    Serial.print(currentPose.y); Serial.print(F(") hd="));
+    const char* hd = (currentPose.heading == HD_NORTH) ? "N" :
+                     (currentPose.heading == HD_EAST)  ? "E" :
+                     (currentPose.heading == HD_SOUTH) ? "S" : "W";
+    Serial.print(hd);
+    Serial.print(F(" cargo=")); Serial.print(_hasPayload ? F("Y") : F("N"));
+    Serial.print(F(" dynBlocked=")); Serial.println(g_dynBlockedCount);
+
+    for (int8_t y = 0; y < GRID_ROWS; y++) {
+        Serial.print(F("y")); Serial.print(y); Serial.print(F(" "));
+        for (int8_t x = 0; x < GRID_COLS; x++) {
+            char c;
+            // 동적 장애물(런타임 IR 감지) 판정
+            bool dyn = false;
+            for (uint8_t i = 0; i < g_dynBlockedCount; i++) {
+                if (g_dynBlocked[i].x == x && g_dynBlocked[i].y == y) { dyn = true; break; }
+            }
+            // 정적 장애물 판정
+            bool stat = false;
+            for (uint8_t i = 0; i < BLOCKED_CELL_COUNT; i++) {
+                if (BLOCKED_CELLS[i].x == x && BLOCKED_CELLS[i].y == y) { stat = true; break; }
+            }
+            // 도시 판정
+            bool city = false;
+            for (uint8_t i = 0; i < CITY_COORD_COUNT; i++) {
+                if (CITY_COORDS[i].x == x && CITY_COORDS[i].y == y) { city = true; break; }
+            }
+
+            if (currentPose.x == x && currentPose.y == y)        c = '@';
+            else if (x == (int8_t)(WAREHOUSE_X) && y == (int8_t)(WAREHOUSE_Y)) c = '#';
+            else if (dyn)                                        c = '!';
+            else if (stat)                                       c = 'x';
+            else if (city)                                       c = 'C';
+            else if (_navMinX > -128 && x < _navMinX)            c = ':';
+            else                                                 c = '.';
+            Serial.print(c);
+            Serial.print(' ');
+        }
+        Serial.println();
+    }
+    Serial.println(F("@=pos #=WH !=dyn x=static C=city :=off-limits"));
 }
 
 // 💡 왼쪽 센서 정규화 함수 (EEPROM 값을 기반으로 동적 정규화)
@@ -460,7 +539,15 @@ void Controller::ProcessRFIDRead()
             }
 
             // ── 1) 도시 가기 ──
-            delay(500);
+            tone(pinBuzzer, 1047);
+            delay(200);
+            noTone(pinBuzzer);
+            delay(50);
+            tone(pinBuzzer, 1047);
+            delay(200);
+            noTone(pinBuzzer);
+            delay(1500); 
+            
             bool reached = navigateTo(tx, ty);
 
             if (reached) {

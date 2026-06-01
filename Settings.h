@@ -13,7 +13,7 @@
 // =====================================================================
 
 #ifndef ROBOT_ID
-  #define ROBOT_ID 1
+  #define ROBOT_ID 2
 #endif
 
 #if   ROBOT_ID == 1
