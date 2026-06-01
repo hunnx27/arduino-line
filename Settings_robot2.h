@@ -56,10 +56,10 @@
 // 도시는 모두 row 7. UID 빈 문자열인 항목은 미등록 (실 태그 부착 후 채우기).
 // 새 도시 추가 시 lookupCityCoord() 가 자동 매핑.
 static const CityCoord CITY_COORDS[] = {
-    {"", 4, 7},  // 맵2 도시 col 4 — TODO: 실 RFID UID
-    {"", 5, 7},  // 맵2 도시 col 5 — TODO: 실 RFID UID
-    {"", 6, 7},  // 맵2 도시 col 6 — TODO: 실 RFID UID
-    {"", 7, 7},  // 맵2 도시 col 7 — TODO: 실 RFID UID
+    {"", 4, 7},  // 대구 Daegu     (col 4) — TODO: 실 RFID UID
+    {"", 5, 7},  // 광주 Gwangju   (col 5) — TODO: 실 RFID UID
+    {"", 6, 7},  // 춘천 Chuncheon (col 6) — TODO: 실 RFID UID
+    {"", 7, 7},  // 제주 Jeju      (col 7) — TODO: 실 RFID UID
 };
 static const uint8_t CITY_COORD_COUNT = sizeof(CITY_COORDS) / sizeof(CityCoord);
 
