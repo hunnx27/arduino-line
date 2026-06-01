@@ -1,47 +1,68 @@
 # 회전 / 직진 튜닝 가이드
 
-기기마다 모터 편차·마찰·바퀴 그립이 달라서 같은 코드라도 회전각·직진성이 조금씩 다릅니다. 이 문서는 어떤 증상에 어떤 값을 만져야 하는지, **실제 어떻게 수정하면 되는지** 함수별 전체 코드와 함께 정리합니다.
+기기마다 모터 편차·마찰·바퀴 그립이 달라서 같은 코드라도 회전각·직진성이 조금씩 다릅니다. 이 문서는 어떤 증상에 어떤 값을 만져야 하는지 정리합니다.
 
-각 코드블록 안의 `// [튜닝] ...` 주석이 붙은 줄의 숫자가 조정 대상입니다.
+**핵심 원칙: 거동(behavior) 튜닝은 거의 전부 [Settings.h](Settings.h) 한 곳에서 합니다.** 로직(`Controller.cpp`)은 건드리지 않고 매크로 값만 바꿔서 재컴파일/업로드하면 됩니다. 각 매크로 위 주석에 조정 방향이 적혀 있습니다.
+
+> 회전은 모두 **사다리꼴 가감속**(`RampTurn`)으로 동작하고, 라인트레이싱은 **PD 제어**, 화물 적재 여부(`_hasPayload`)에 따라 별도 `_CARGO` 값으로 전환됩니다. 옛 버전의 수동 킥스타트 회전 / P 제어 / `Power-20` 감속은 더 이상 없습니다.
 
 ---
 
 ## 1. 회전 함수 3종 — 구조
 
-### PivotTurnLeft / PivotTurnRight (≈ 90°)
-각 회전은 2단계로 동작합니다:
+세 회전 함수(`TurnHalf`, `PivotTurnLeft`, `PivotTurnRight`)는 모두 공통 프리미티브 [`RampTurn`](Controller.cpp#L729)을 호출합니다. RampTurn 은 **사다리꼴 속도 프로파일**로 돕니다:
 
-1. **킥스타트** — 양쪽 동일 PWM 으로 정지마찰 극복 (50 ms)
-2. **회전 본구간** — 한쪽 약(90), 한쪽 강(180) PWM 으로 시간만큼 회전. **시간이 회전각을 결정**합니다.
+```
+가속(TURN_START_PWM → cruise) → 정속(cruise, holdMs) → 감속(cruise → TURN_START_PWM) → 정지 → 안정화(TURN_SETTLE_MS)
+```
 
-화물 적재 (`eWareHousePosition`) 시 더 무거우므로 같은 PWM 으로 더 오래 돌립니다 → **140 ms vs 비적재 110 ms**.
+- **정속 PWM(cruise)** = 회전 속도. 빠르게 돌릴수록 관성 overshoot 위험.
+- **holdMs(정속 시간)** = 사실상 **회전각**을 결정 (회전각 ≈ PWM × 시간).
+- **가감속 구간도 회전을 보탭니다** — `TURN_RAMP_STEPS`/`TURN_RAMP_STEP_MS` 를 바꾸면 회전각이 같이 변하므로 `*_DELAY_MS` 로 재보정 필요.
 
-### TurnHalf (≈ 180°)
-180° 한 번에 돌므로 본구간 한 단락. **시간(450 ms) 만 조정**하면 됩니다.
+### TurnHalf (≈180°)
+제자리 회전(왼쪽 후진 + 오른쪽 전진, 양 바퀴 같은 PWM). [Controller.cpp:768](Controller.cpp#L768).
+
+### PivotTurnLeft / PivotTurnRight (≈90°)
+강쪽(바깥 바퀴) / 약쪽(안쪽 바퀴) PWM 을 비대칭으로 줘서 90° 회전. 두 PWM 차이가 클수록 돌면서 앞으로 쏠리는 완만한 호, 같으면 순수 제자리 회전. [Controller.cpp:777](Controller.cpp#L777) / [:789](Controller.cpp#L789).
+
+### 화물 적재 시 (`_CARGO`)
+`LifterUp()` 으로 팔레트를 들면 `_hasPayload=true` 가 되고, 이후 모든 회전이 `_CARGO` 변형 상수(더 잘게 쪼갠 가감속 + 낮춘 PWM + 보충한 delay)로 전환되어 팔레트 슬라이드/관성 흔들림을 줄입니다. `LifterDown()` 이 다시 일반 거동으로 되돌립니다.
 
 ### 직진 / 라인트레이싱
-`Power` (기본 110) 를 기준으로 P 제어로 좌/우 PWM 을 조정. `drive()` 안에서 EEPROM 모터 캘리브와 `SPEED_SCALE` 이 곱해집니다.
+`MOTOR_POWER`(기본 110) 기준으로 **PD 제어**(`Kp`, `Kd`)가 좌/우 PWM 을 조정. [`drive()`](Controller.cpp#L688) 안에서 EEPROM 모터 캘리브와 `SPEED_SCALE` 이 곱해집니다. 교차로 직전엔 **사전 감속**, 교차로 통과 순간엔 **통과 감속**이 별도로 적용됩니다(§4.4).
 
 ---
 
 ## 2. 핵심 튜닝 값 한눈에
 
+전부 [Settings.h](Settings.h)에 있습니다.
+
 | 값 | 위치 | 기본값 | 설명 |
 |---|---|---|---|
-| **회전 본구간 시간** (Pivot) | [PivotTurnLeft](Controller.cpp#L553) / [PivotTurnRight](Controller.cpp#L580) | 140 / 110 ms | 적재/비적재 본구간 delay. **회전각 조정의 1순위** |
-| **회전 PWM 강쪽** (Pivot) | 같은 함수 본구간 | 180 | 빠른 바퀴 PWM. 회전 속도 결정 |
-| **회전 PWM 약쪽** (Pivot) | 같은 함수 본구간 | 90 | 느린 바퀴 PWM. 값이 클수록 회전 반경 ↑ |
-| **킥스타트 PWM** (Pivot) | 같은 함수 [1] 구간 | 170 | 정지마찰 극복용 초기 부스트 |
-| **킥스타트 시간** (Pivot) | 같은 함수 [1] 구간 | 50 ms | 부스트 지속시간 |
-| **180° 본구간 시간** | [TurnHalf](Controller.cpp#L545) | 450 ms | TurnHalf 회전각 |
-| **180° 본구간 PWM** | 같은 함수 | 170 | TurnHalf 회전 속도 |
-| **`SPEED_SCALE`** | [Controller.h:28](Controller.h#L28) | `0.6f` | 전역 PWM/delay 스케일 |
-| **`Power`** | [Controller.h:129](Controller.h#L129) | 110 | 기본 라인트레이스 전진 PWM |
-| **`Kp`** | [Controller.h:133](Controller.h#L133) | 0.05 | 라인 정렬 P 제어 비례 상수 |
-| **`maxCorrection`** | [Controller.h:134](Controller.h#L134) | 35.0 | P 제어 1회 최대 보정값 |
+| **`SPEED_SCALE`** | [Settings.h:20](Settings.h#L20) | `1.1f` | 전역 PWM/delay 스케일. PWM×, delay÷ |
+| **`MOTOR_POWER`** | [Settings.h:73](Settings.h#L73) | 110 | 일반 라인트레이스 base PWM |
+| **`MOTOR_POWER_CARGO`** | [Settings.h:75](Settings.h#L75) | 90 | 화물 적재 시 base PWM |
+| **`CROSSING_PASS_POWER`** | [Settings.h:79](Settings.h#L79) | 70 | 교차로 통과 순간 감속 PWM (overshoot 방지) |
+| **`CROSSING_APPROACH_POWER` / `_CARGO`** | [Settings.h:82](Settings.h#L82) | 90 / 80 | 교차로 도착 전 사전 감속 PWM |
+| **`CROSSING_APPROACH_MS` / `_CARGO`** | [Settings.h:87](Settings.h#L87) | 300 / 400 | 직전 교차로 후 이 시간 지나면 사전 감속 시작 |
+| **`PID_KP`** | [Settings.h:100](Settings.h#L100) | `0.04f` | PD 비례 항 |
+| **`PID_KD`** | [Settings.h:101](Settings.h#L101) | `0.3f` | PD 미분 항 (진동 억제) |
+| **`PID_MAX_CORRECTION`** | [Settings.h:109](Settings.h#L109) | `30.0f` | 조향 보정 saturation |
+| **`LINEDETECT_NORM_MIN`** | [Settings.h:127](Settings.h#L127) | 700 | 교차로 검출 임계값 (정규화 0~1000 기준) |
+| **`LINEDETECT_RAW_FALLBACK`** | [Settings.h:132](Settings.h#L132) | 730 | 캘리브 무효 시 폴백 raw 임계값 |
+| **`OBSTACLE_THRESHOLD` / `_SIDE`** | [Settings.h:136](Settings.h#L136) | 700 / 700 | IR 장애물 임계값 (중앙 / 좌·우) |
+| **TurnHalf PWM / DELAY (일반/화물)** | [Settings.h:218](Settings.h#L218) | 170/330, 120/410 | 180° 속도/각도 |
+| **PivotLeft STRONG/WEAK/DELAY** | [Settings.h:228](Settings.h#L228) | 170/120/145 | 좌회전 속도/각도 (화물 120/70/225) |
+| **PivotRight STRONG/WEAK/DELAY** | [Settings.h:238](Settings.h#L238) | 170/120/155 | 우회전 속도/각도 (화물 120/70/230) |
+| **`TURN_RAMP_STEPS` / `_STEP_MS`** | [Settings.h:183](Settings.h#L183) | 8 / 12 | 가감속 분할/스텝시간 (부드러움). 화물 14/10 |
+| **`TURN_START_PWM`** | [Settings.h:185](Settings.h#L185) | 90 | 가감속 시작/끝 PWM (최소 회전 속도) |
+| **`TURN_SETTLE_MS`** | [Settings.h:199](Settings.h#L199) | 150 | 회전 후 차체 안정화 대기 |
+| **`SERVO_DOWN` / `SERVO_UP`** | [Settings.h:143](Settings.h#L143) | 20° / 80° | 리프터 내림/올림 각도 |
+| **`SERVO_STEP_DEG` / `_STEP_MS`** | [Settings.h:151](Settings.h#L151) | 2 / 15 | 리프터 부드러운 슬루 |
 | **`_motorCalibL/R`** | EEPROM (+8/+12) | float | 직진 보정 (별도 캘리브 스케치) |
-| **`LINEDETECT_THRESHOLD_MIN`** | [Controller.h:16](Controller.h#L16) | 730 | 교차로 검출 임계값 |
-| **`OBSTACLE_THRESHOLD`** | [Controller.h:23](Controller.h#L23) | 500 | 전방중앙 IR 장애물 임계값 |
+
+> **디버그 토글**: `DEBUG_TRACE`([Settings.h:118](Settings.h#L118), 기본 0), `DEBUG_APPROACH_TONE`([Settings.h:93](Settings.h#L93), 기본 1), `DEBUG_TURN_PAUSE_MS`([Settings.h:204](Settings.h#L204), 기본 0). 실주행/대회 전 §8 참고해 정리.
 
 ---
 
@@ -49,196 +70,141 @@
 
 | 증상 | 우선 조정 | 어디서 |
 |---|---|---|
-| 좌회전 부족 (90° 못 채움) | 본구간 delay 110/140 **↑** (+10 ms) | 4.1 |
-| 좌회전 과회전 | 같은 값 **↓** | 4.1 |
-| 우회전만 다름 | 우회전 본구간 delay 따로 조정 | 4.2 |
-| 화물 들 때만 어긋남 | `eWareHousePosition ? 140` 쪽만 조정 | 4.1 / 4.2 |
-| 180° 어긋남 | 450 ms **↑/↓** (±30) | 4.3 |
-| 회전 시작 못 함 | 킥스타트 PWM 170 **↑** 또는 `SPEED_SCALE` **↑** | 4.1 / 4.2 / 4.5 |
-| 회전 중 미끄러짐 | 킥스타트 시간 50 ms **↑** (+20) | 4.1 / 4.2 |
+| 좌회전 부족 (90° 못 채움) | `PIVOT_LEFT_DELAY_MS` **↑** (+10) | §4.1 |
+| 좌회전 과회전 | `PIVOT_LEFT_DELAY_MS` **↓** | §4.1 |
+| 우회전만 다름 | `PIVOT_RIGHT_DELAY_MS` 따로 조정 | §4.1 |
+| 화물 들 때만 어긋남 | `*_DELAY_MS_CARGO` 쪽만 조정 | §4.1 |
+| 180° 어긋남 | `TURNHALF_DELAY_MS` **↑/↓** (±30) | §4.1 |
+| 회전 시작 멈칫 (출발 안 함) | `TURN_START_PWM` **↑** 또는 `SPEED_SCALE` **↑** | §4.1 / §4.5 |
+| 회전 시작/끝이 거칠고 덜컥임 | `TURN_RAMP_STEPS` **↑** | §4.1 |
+| 회전 한 번이 너무 오래 걸림 | `TURN_RAMP_STEP_MS` **↓** | §4.1 |
+| 화물 회전이 90° 넘게 돎 (부드러움 유지) | `TURN_RAMP_STEP_MS_CARGO` **↓** | §4.1 |
 | 직진 한쪽으로 휨 | `_motorCalibL/R` (별도 캘리브 스케치) | EEPROM |
-| 라인 위 갈지자 흔들림 | `Kp` ↓, `maxCorrection` ↓ | 4.5 |
-| P 제어 둔함 | `Kp` ↑ | 4.5 |
-| 라인 인식 누락 | `LINEDETECT_THRESHOLD_MIN` **↓** | 4.5 |
-| 라인 외 잡음에 트립 | `LINEDETECT_THRESHOLD_MIN` **↑** | 4.5 |
-| 장애물 오감지 | `OBSTACLE_THRESHOLD` **↓** | 4.5 |
-| 장애물 미감지 | `OBSTACLE_THRESHOLD` **↑** | 4.5 |
-| 화물 적재 시 라인트레이스가 너무 빠름 | `Power - 20` 의 20 을 ↑ (예: 30) | 4.4 |
+| 라인 위 갈지자/진동 | `PID_KD` **↓** 또는 `PID_KP` **↓** | §4.4 |
+| 곡선에서 라인 따라가는 게 느림(lag) | `PID_KP` **↑** | §4.4 |
+| 곡선/급이탈에서 바깥으로 흘러나감 | `PID_MAX_CORRECTION` **↑** | §4.4 |
+| 직선에서 좌우 지그재그 | `PID_MAX_CORRECTION` **↓** | §4.4 |
+| 라인 인식 누락 | `LINEDETECT_NORM_MIN` **↓** | §4.4 |
+| 라인 외 잡음에 트립 | `LINEDETECT_NORM_MIN` **↑** | §4.4 |
+| 교차로 지나치고 멈춤(overshoot) | `CROSSING_PASS_POWER` **↓** 또는 `CROSSING_APPROACH_*` **↓** | §4.4 |
+| 교차로 직전 너무 일찍 느려짐 | `CROSSING_APPROACH_MS` **↑** | §4.4 |
+| 화물 적재 주행이 너무 빠름 | `MOTOR_POWER_CARGO` **↓** | §4.4 |
+| 장애물 오감지 (없는데 트립) | `OBSTACLE_THRESHOLD` **↓** | §4.4 |
+| 장애물 미감지 | `OBSTACLE_THRESHOLD` **↑** | §4.4 |
+| 측면 벽/라인에 장애물 오감지 | `OBSTACLE_THRESHOLD_SIDE` **↓** | §4.4 |
+| 리프터가 화물에 안 닿음 | `SERVO_UP` **↑** | §4.3 |
+| 리프터가 바닥 긁음 | `SERVO_DOWN` **↓** | §4.3 |
 
 ---
 
-## 4. 조정 코드 예시 — 함수 전체
+## 4. 조정 값 — Settings.h 블록별
 
-각 함수 안에서 `// [튜닝]` 주석이 붙은 줄의 숫자만 바꾸시면 됩니다. 다른 줄은 건드리지 마세요.
+값은 전부 [Settings.h](Settings.h)에 모여 있습니다. 아래는 각 블록의 실제 내용입니다. 주석의 조정 방향을 보고 숫자만 바꾸세요. **로직(`Controller.cpp`)은 건드릴 필요 없습니다.**
 
-### 4.1 PivotTurnLeft — 좌회전 (≈90°)
+### 4.1 회전 — 가감속(공통) + 회전별 PWM/DELAY
 
-위치: [Controller.cpp:553](Controller.cpp#L553)
+가감속 공통 ([Settings.h:183](Settings.h#L183)):
 
 ```cpp
-void Controller::PivotTurnLeft()
-{
-    if (Serial) Serial.println("Enter Pivot turn Left");
-    analogWrite(LeftWheelPWM, 0);
-    analogWrite(RightWheelPWM, 0);
-    delay(10);
-    digitalWrite(LeftWheelDir, 0);
-    digitalWrite(RightWheelDir, 0);
-
-    Move();
-    delay(10);
-    // [1] 킥스타트: 정지 마찰 극복용 초기 부스트 (양쪽 동일 PWM, motorCalib 적용, 50ms)
-    analogWrite(LeftWheelPWM, (int)(170 * _motorCalibL * SPEED_SCALE));   // [튜닝] 170: 회전 시작 못 함 → ↑ (예: 190)
-    analogWrite(RightWheelPWM, (int)(170 * _motorCalibR * SPEED_SCALE));  // [튜닝] 170: 위 줄과 같은 값으로
-    delay((unsigned long)(50 / SPEED_SCALE));                              // [튜닝] 50ms: 부스트 시간. 미끄러지면 ↑ (예: 70)
-    // [2] 회전 구간: 왼쪽 약, 오른쪽 강 → 좌회전 (시간으로 회전각 결정)
-    analogWrite(LeftWheelPWM, (int)(90 * _motorCalibL * SPEED_SCALE));    // [튜닝] 90: 약쪽 PWM (회전 반경)
-    analogWrite(RightWheelPWM, (int)(180 * _motorCalibR * SPEED_SCALE));  // [튜닝] 180: 강쪽 PWM (회전 속도). 만지면 아래 delay 재튜닝
-    delay((unsigned long)((currentPosition == eWareHousePosition ? 140 : 110) / SPEED_SCALE));  // [튜닝] 140/110: 적재/비적재 본구간 시간 — 좌회전 각도 1순위 (부족 ↑, 과회전 ↓)
-
-    // [3] 정지
-    analogWrite(LeftWheelPWM, 0);
-    analogWrite(RightWheelPWM, 0);
-
-    if (Serial) Serial.println("Leave Pivot turn Left");
-}
+#define TURN_RAMP_STEPS     8    // 가감속 분할 수. ↑ 더 부드럽게 / ↓ 빠릿하게
+#define TURN_RAMP_STEP_MS   12   // 한 스텝 유지 ms. ↑ 완만하게 / ↓ 빨리 끝냄
+#define TURN_START_PWM      90   // 가감속 시작/끝 PWM(최소 회전 속도). 출발 멈칫 ↑ / 거칠면 ↓
+#define TURN_RAMP_STEPS_CARGO     14  // 화물: 부드러움은 STEPS 에서 나옴(크게 유지)
+#define TURN_RAMP_STEP_MS_CARGO   10  // 화물: 과회전은 STEP_MS 에서 — 90° 넘으면 ↓
+#define TURN_START_PWM_CARGO      90
+#define TURN_SETTLE_MS      150  // 회전 후 안정화 대기. 인식 흔들리면 ↑ / 굼뜨면 ↓
 ```
 
-### 4.2 PivotTurnRight — 우회전 (≈90°)
-
-위치: [Controller.cpp:580](Controller.cpp#L580)
+회전별 속도(PWM)/각도(DELAY) ([Settings.h:218](Settings.h#L218)):
 
 ```cpp
-void Controller::PivotTurnRight()
-{
-    if (Serial) Serial.println("Enter Pivot turn Right");
-    analogWrite(LeftWheelPWM, 0);
-    analogWrite(RightWheelPWM, 0);
-    delay(10);
-    digitalWrite(LeftWheelDir, 1);
-    digitalWrite(RightWheelDir, 1);
+// TurnHalf 180° (양 바퀴 같은 PWM)
+#define TURNHALF_PWM             170   // [일반] 속도
+#define TURNHALF_DELAY_MS        330   // [일반] 각도 — 못 채움 ↑ / 넘게 돎 ↓
+#define TURNHALF_PWM_CARGO       120   // [화물] 속도
+#define TURNHALF_DELAY_MS_CARGO  410   // [화물] 각도
 
-    Move();
-    delay(10);
-    // [1] 킥스타트: 정지 마찰 극복용 초기 부스트 (양쪽 동일 PWM, 50ms)
-    analogWrite(LeftWheelPWM, (int)(170 * _motorCalibL * SPEED_SCALE));   // [튜닝] 170: 회전 시작 못 함 → ↑ (예: 190)
-    analogWrite(RightWheelPWM, (int)(170 * _motorCalibR * SPEED_SCALE));  // [튜닝] 170: 위 줄과 같은 값으로
-    delay((unsigned long)(50 / SPEED_SCALE));                              // [튜닝] 50ms: 부스트 시간
-    // [2] 회전 구간: 왼쪽 강, 오른쪽 약 → 우회전 (시간으로 회전각 결정)
-    analogWrite(LeftWheelPWM, (int)(170 * _motorCalibL * SPEED_SCALE));   // [튜닝] 170: 강쪽 PWM (회전 속도). 만지면 아래 delay 재튜닝
-    analogWrite(RightWheelPWM, (int)(90 * _motorCalibR * SPEED_SCALE));   // [튜닝] 90: 약쪽 PWM (회전 반경)
-    delay((unsigned long)((currentPosition == eWareHousePosition ? 140 : 110) / SPEED_SCALE));  // [튜닝] 140/110: 적재/비적재 본구간 시간 — 우회전 각도 1순위 (부족 ↑, 과회전 ↓)
+// PivotTurnLeft 90° (STRONG=바깥, WEAK=안쪽)
+#define PIVOT_LEFT_STRONG_PWM         170   // [일반] 바깥 바퀴 속도
+#define PIVOT_LEFT_WEAK_PWM           120   // [일반] 안쪽 바퀴 속도(차 ↑ → 호가 커짐)
+#define PIVOT_LEFT_DELAY_MS           145   // [일반] 각도
+#define PIVOT_LEFT_STRONG_PWM_CARGO   120   // [화물]
+#define PIVOT_LEFT_WEAK_PWM_CARGO      70
+#define PIVOT_LEFT_DELAY_MS_CARGO     225
 
-    // [3] 정지
-    analogWrite(LeftWheelPWM, 0);
-    analogWrite(RightWheelPWM, 0);
-    if (Serial) Serial.println("Leave Pivot turn Right");
-}
+// PivotTurnRight 90° (구조 동일, 좌/우 편차로 값 다를 수 있음)
+#define PIVOT_RIGHT_STRONG_PWM        170
+#define PIVOT_RIGHT_WEAK_PWM          120
+#define PIVOT_RIGHT_DELAY_MS          155   // 좌(145)와 별도 — 우만 어긋나면 여기만
+#define PIVOT_RIGHT_STRONG_PWM_CARGO  120
+#define PIVOT_RIGHT_WEAK_PWM_CARGO     70
+#define PIVOT_RIGHT_DELAY_MS_CARGO    230
 ```
 
-> **참고**: 좌/우 회전 시간(140/110)을 각각 독립적으로 조정할 수 있습니다. 좌만 부족·우는 정상이면 4.1 의 값만 바꾸세요.
+> ⚠ `TURN_RAMP_STEPS`/`STEP_MS`/`START_PWM` 을 바꾸면 가감속 구간이 회전을 보태는 양이 달라져 회전각이 변합니다. 그 세 값을 손대면 위 `*_DELAY_MS` 로 90°/180° 를 다시 맞추세요. (실제로 가감속 도입 후 TurnHalf 가 더 돌아서 `TURNHALF_DELAY_MS` 를 450→330 으로 낮춘 상태.)
 
-### 4.3 TurnHalf — 180°
+참고로 회전 본체는 손댈 일이 없지만, 동작 이해용 함수는 [`RampTurn`](Controller.cpp#L729) / [`TurnHalf`](Controller.cpp#L768) / [`PivotTurnLeft`](Controller.cpp#L777) / [`PivotTurnRight`](Controller.cpp#L789).
 
-위치: [Controller.cpp:545](Controller.cpp#L545)
+### 4.2 디버그 — 회전각 측정
 
 ```cpp
-void Controller::TurnHalf() {
-    drive(BACKWARD, 80, FORWARD, 80);                  // [튜닝] 80: 부드러운 킥스타트 PWM (보통 그대로)
-    delay((unsigned long)(50 / SPEED_SCALE));          // [튜닝] 50ms: 킥스타트 시간
-    drive(BACKWARD, 170, FORWARD, 170);                // [튜닝] 170: 본구간 PWM (회전 속도). 만지면 아래 delay 재튜닝
-    delay((unsigned long)(450 / SPEED_SCALE));         // [튜닝] 450ms: 180° 회전 시간 — 부족 ↑ (±30), 과함 ↓
-    Stop();
-}
+#define DEBUG_TURN_PAUSE_MS  0   // >0 으로 두면 매 회전 후 그만큼 정지 → 각도기로 측정
+                                 // ⚠ 실주행 전 반드시 0
 ```
 
-### 4.4 LineTrace — 직진 P 제어
-
-위치: [Controller.cpp:428](Controller.cpp#L428)
+### 4.3 리프터 서보
 
 ```cpp
-void Controller::LineTrace() {
-    static uint8_t bSignalHigh = 0;
-    static unsigned long lastSensorLog = 0;
-
-    int leftRaw = GetLeft();
-    int rightRaw = GetRight();
-
-    // 디버그: 200ms마다 좌/우 raw 값과 정규화 값 출력
-    if (millis() - lastSensorLog > 200) {
-        Serial.print("L_raw=");  Serial.print(leftRaw);
-        Serial.print(" R_raw="); Serial.print(rightRaw);
-        Serial.print(" | L_n="); Serial.print(normalizeLeft(leftRaw));
-        Serial.print(" R_n=");   Serial.println(normalizeRight(rightRaw));
-        lastSensorLog = millis();
-    }
-
-    // 교차로(검은선 2개 동시) 판단
-    if (rightRaw > LINEDETECT_THRESHOLD_MIN && leftRaw > LINEDETECT_THRESHOLD_MIN) {
-        if (bSignalHigh == 0) {
-            nLineCounter++;
-            if (Serial) {
-                Serial.println(String("LINE!!! :") + String(nLineCounter));
-            }
-            bSignalHigh = 1;
-        }
-
-        Forward(Power);
-        delay((unsigned long)(50 / SPEED_SCALE));  // [튜닝] 50ms: 교차로 통과 후 살짝 더 전진하는 시간 (정밀 정렬 시 후진으로 라인 다시 찾기 위함)
-    }
-    else {
-        if (bSignalHigh) {
-            bSignalHigh = 0;
-        }
-
-        // 부드러운 P-제어
-        int leftNorm = normalizeLeft(leftRaw);
-        int rightNorm = normalizeRight(rightRaw);
-
-        int error = rightNorm - leftNorm;
-        float correction = Kp * error;                              // Kp 는 Controller.h 에서 조정 (4.5 참조)
-
-        if (correction > maxCorrection) correction = maxCorrection; // maxCorrection 도 Controller.h
-        if (correction < -maxCorrection) correction = -maxCorrection;
-
-        int basePower = (currentPosition == eWareHousePosition) ? Power - 20 : Power;  // [튜닝] 20: 적재 시 감속폭. 더 천천히 → ↑ (예: 30~40)
-
-        float leftPower = basePower + correction;
-        float rightPower = basePower - correction;
-
-        drive(FORWARD, (int)leftPower, FORWARD, (int)rightPower);
-    }
-}
+#define SERVO_DOWN   (90  - 70)    // 내림 = 20°. 바닥 긁으면 ↓
+#define SERVO_UP     (180 - 150)   // 올림 = 80°. 화물 안 닿으면 ↑
+#define SERVO_DEF    SERVO_DOWN     // 부팅 위치
+#define SERVO_STEP_DEG   2          // 스텝당 각도(작을수록 부드럽고 느림)
+#define SERVO_STEP_MS    15         // 스텝 간 대기 ms
+#define SERVO_SETTLE_MS  120        // 도달 후 detach 전 안착 대기
 ```
 
-### 4.5 Controller.h — 전역 상수 & 멤버 변수
+리프터는 [`LifterMove`](Controller.cpp#L498)가 목표각까지 `SERVO_STEP_DEG` 씩 단계적으로 슬루해 부드럽게 올라갑니다. 이동 총시간 ≈ (각도차 / `SERVO_STEP_DEG`) × `SERVO_STEP_MS`.
 
-위치: [Controller.h](Controller.h)
+### 4.4 직진 — PD 제어 + 감속 + 검출/장애물 임계값
+
+PD 제어 ([Settings.h:100](Settings.h#L100)):
 
 ```cpp
-// === 임계값 & 전역 스케일 (Controller.h 상단) ===
+#define PID_KP               0.04f   // 비례. 곡선 lag ↑ / 진동 ↓
+#define PID_KD               0.3f    // 미분(진동 억제). 진동 ↓ / 보통 Kp 의 5~30배
+#define PID_MAX_CORRECTION   30.0f   // 조향 보정 saturation (좌우 PWM 차 최대 2×).
+                                     //   바깥으로 흘러나감 ↑ / 직선 지그재그 ↓
+```
 
-#define LINEDETECT_THRESHOLD_MIN 730  // [튜닝] 교차로 검출 임계값 (정규화 raw 기준)
-                                      //         라인 인식 누락 → ↓ / 잡음 트립 → ↑
-                                      //         흰 raw 와 검은 raw 의 중간 위쪽으로 잡기
+속도/감속 ([Settings.h:73](Settings.h#L73)):
 
-#define OBSTACLE_THRESHOLD 500        // [튜닝] IR 장애물 임계값 (A0 raw < 이 값일 때 트립)
-                                      //         오감지(없는데 트립) → ↓ / 미감지 → ↑
+```cpp
+#define MOTOR_POWER           110   // 일반 base PWM
+#define MOTOR_POWER_CARGO      90   // 화물 적재 시 base PWM (빠르면 ↓)
+#define CROSSING_PASS_POWER    70   // 교차로 통과 순간 감속 PWM (overshoot ↓)
+#define CROSSING_APPROACH_POWER         90  // 교차로 도착 전 사전 감속 PWM
+#define CROSSING_APPROACH_POWER_CARGO   80
+#define CROSSING_APPROACH_MS          300   // 직전 교차로 후 이 시간 지나면 감속 시작
+#define CROSSING_APPROACH_MS_CARGO    400
+```
 
-#define SPEED_SCALE 0.6f              // [튜닝] 전역 PWM/delay 스케일 (0.5 ~ 1.0)
-                                      //         낮춤 → 천천히, 단 0.5 미만은 정지마찰 못이김
-                                      //         바꾸면 4.1~4.3 의 delay 들 재튜닝 필요
+라인/장애물 검출 ([Settings.h:127](Settings.h#L127)):
 
-// === Controller 클래스 멤버 변수 (Controller.h 클래스 안) ===
+```cpp
+#define LINEDETECT_NORM_MIN          700   // 교차로 검출 임계(정규화 0~1000). 누락 ↓ / 잡음 ↑
+#define LINEDETECT_CALIB_MIN_SPAN    100   // 흑-백 격차 < 이 값이면 캘리브 무효 → 폴백
+#define LINEDETECT_RAW_FALLBACK      730   // 캘리브 무효 시 폴백 raw 임계(비상용)
+#define OBSTACLE_THRESHOLD       700        // 중앙 IR < 이 값이면 장애물. 오감지 ↓ / 미감지 ↑
+#define OBSTACLE_THRESHOLD_SIDE  700        // 좌·우 IR. 측면 오감지 줄이려면 ↓
+```
 
-    int Power = 110;                  // [튜닝] 기본 라인트레이스 전진 PWM
-                                      //         빠르게 → ↑ (Kp 도 같이 재튜닝 권장)
+동작: 라인 검출은 [`onLine()`](Controller.cpp#L342)이 흑/백 캘리브 기반 **정규화 값**(흰0~검1000)으로 판정 → 로봇·바닥 독립. 캘리브가 무효(격차 < `LINEDETECT_CALIB_MIN_SPAN`)면 raw 폴백. 장애물은 [`CheckObstacle()`](Controller.cpp#L354)이 **중앙+좌+우 3센서**를 1회 디바운스 재확인 후 판정. PD 제어 본체는 [`LineTrace()`](Controller.cpp#L600).
 
-    // 💡 첫 번째 코드에서 가져온 P제어용 변수
-    float Kp = 0.05;                  // [튜닝] P 제어 비례 상수
-                                      //         갈지자 ↓ (예: 0.03) / 둔감 ↑ (예: 0.07)
-    float maxCorrection = 35.0;       // [튜닝] 1회 보정 한도
-                                      //         흔들림 ↓ (예: 25) / 급커브 적응 ↑ (예: 50)
+### 4.5 SPEED_SCALE — 전역 속도
+
+```cpp
+#define SPEED_SCALE 1.1f   // 1.0=원속도. PWM×SCALE, delay÷SCALE. 권장 0.5~1.1
+                           // 0.5 미만은 정지마찰로 모터 안 돎. 바꾸면 §7 주의
 ```
 
 ---
@@ -246,24 +212,26 @@ void Controller::LineTrace() {
 ## 5. 권장 튜닝 순서
 
 1. **EEPROM 모터·센서 캘리브** 먼저
-   - 워크스페이스의 별도 스케치 (`Calibration.ino`, `MotorCalibration.ino`) 로 흑/백 raw 값과 모터 calib 을 EEPROM 240번지 이후에 저장.
-   - 본 스케치는 시작 시 [readData()](Controller.cpp#L627) 로 이걸 읽어 사용 — 0 으로 비어 있으면 직진/정규화가 망가짐.
+   - 워크스페이스의 별도 스케치(`Calibration.ino`, `MotorCalibration.ino`)로 흑/백 raw 값과 모터 calib 을 EEPROM 240번지 이후에 저장.
+   - 본 스케치는 시작 시 [`readData()`](Controller.cpp#L822)로 읽어 사용 — 비어 있으면 직진/정규화가 망가짐(§6).
 2. **`SPEED_SCALE` 결정** (§4.5)
-   - 모터가 안정적으로 돌면서 너무 빠르지 않은 최저값 (보통 0.5 ~ 0.7).
-   - 한 번 정하면 고정. 바꾸면 회전 delay 전부 재튜닝.
-3. **직진성 점검** (§4.4, §4.5)
-   - 라인 위 갈지자 없이 진행되는지. 필요 시 `Kp`, `maxCorrection`, `Power` 조정.
-4. **PivotTurn 좌·우 각각** (§4.1, §4.2)
-   - 직진 → 정지 → PivotTurn 한 번 → 직진 시퀀스. 90° 되는지 바닥에 직각 테이프로 확인.
-   - 적재(140 ms)와 비적재(110 ms) 각각 별도 조정.
-5. **TurnHalf 180°** (§4.3)
-   - 마지막. ±30 ms 단위로 잡으면 충분.
+   - 모터가 안정적으로 돌면서 너무 빠르지 않은 값. 한 번 정하면 고정 (바꾸면 회전 delay 재튜닝).
+3. **직진성 점검** (§4.4)
+   - 라인 위 갈지자 없이 진행되는지. `PID_KD` → `PID_KP` → `PID_MAX_CORRECTION` 순으로.
+4. **검출 임계값** (§4.4)
+   - `DEBUG_TRACE=1` 로 라인 위 `L_n`/`R_n` 값을 보고 `LINEDETECT_NORM_MIN` 을 그 사이로.
+5. **PivotTurn 좌·우** (§4.1)
+   - 직진 → 정지 → 회전 한 번 → 직진 시퀀스로 90° 확인. `DEBUG_TURN_PAUSE_MS` 로 각도 측정.
+   - 일반/화물(`_CARGO`) 각각 조정.
+6. **TurnHalf 180°** (§4.1). ±30 ms 단위.
+7. **사전 감속/통과 감속** (§4.4) 으로 교차로 overshoot 미세 조정.
+8. 실주행 전 **디버그 토글 정리** (§8).
 
 ---
 
 ## 6. EEPROM 캘리브레이션 상세
 
-[readData()](Controller.cpp#L627) 가 EEPROM 240번지부터 6개 값을 읽어옵니다:
+[`readData()`](Controller.cpp#L822)가 EEPROM 240번지부터 6개 값을 읽어옵니다:
 
 | Offset | Type | 필드 | 의미 |
 |---|---|---|---|
@@ -275,18 +243,30 @@ void Controller::LineTrace() {
 | +12 | float | `_motorCalibL` | 왼쪽 PWM 배수 |
 
 - **모터 calib 값**: 보통 **0.95 ~ 1.05** 범위. 1.0 = 그대로. 한쪽이 빠르면 그쪽 값을 낮춤.
-- **센서 흑/백 값**: [normalizeLeft/Right()](Controller.cpp#L192) 가 0~1000 정규화에 사용. **흰 raw < 검은 raw** 여야 정상. 뒤집혀 있으면 정규화가 한쪽으로 항상 클램프되어 P 제어가 한쪽으로만 꺾이는 증상이 납니다 (CLAUDE.md 의 캘리브 이력 참조).
-- 본 스케치 플래시는 EEPROM 을 지우지 않지만, **스톡 펌웨어 플래시는 지울 수 있으니** 캘리브 후엔 이 스케치만 올리도록 주의.
+- **센서 흑/백 값**: [`normalizeLeft/Right()`](Controller.cpp#L318)가 0~1000 정규화에 사용. **흰 raw < 검은 raw** 여야 정상. 뒤집혀 있으면 정규화가 한쪽으로 항상 클램프되어 PD 제어가 한쪽으로만 꺾이는 증상이 납니다.
+- 안전장치: 흑-백 격차가 `LINEDETECT_CALIB_MIN_SPAN`(100)보다 작으면 캘리브 무효로 보고 raw 폴백(`LINEDETECT_RAW_FALLBACK`)으로 검출 — EEPROM 초기화 보드에서 정규화가 항상 1000 되는 오작동 방지.
+- 본 스케치 플래시는 캘리브 영역(240~255)을 지우지 않습니다. 단 **스톡 펌웨어 플래시는 지울 수 있으니** 캘리브 후엔 이 스케치만 올리도록 주의.
+
+> EEPROM 0~199 영역은 별도로 NavLog 디버그 버퍼가 사용합니다(§8). 캘리브 영역과 겹치지 않습니다.
+
+### 캘리브 이력 (2026-05-24)
+정규화 도입 직후 `R_n` 이 항상 0 으로 클램프되어 P 제어가 한쪽으로만 꺾이는 증상이 있었음. 원인은 흑/백 값이 뒤집힌(`_black < _white`) 옛 EEPROM 값. 정상 복구 후:
+
+| | leftWhite | leftBlack | rightWhite | rightBlack | motorCalibL | motorCalibR |
+|---|---|---|---|---|---|---|
+| Before(옛) | 397 | 256 | 402 | 268 | 0.980 | 1.000 |
+| After(정상) | 320 | 912 | 423 | 928 | 0.980 | 1.000 |
 
 ---
 
 ## 7. `SPEED_SCALE` 주의사항
 
-[Controller.h:28](Controller.h#L28) `SPEED_SCALE = 0.6f`. 거의 모든 곳에 적용됩니다:
+[Settings.h:20](Settings.h#L20) `SPEED_SCALE = 1.1f`. 거의 모든 곳에 적용됩니다:
 
-- 모든 PWM 출력 × `SPEED_SCALE` (느려짐)
-- 거의 모든 delay × 1/`SPEED_SCALE` (시간 늘림, 같은 각도/거리 유지)
-- **예외**: 후진 정렬 dance ([LineTracer](Controller.cpp#L384) 의 400 ms 후진) 는 의도적으로 `× SPEED_SCALE` (시간 안 늘리고 줄임). 관성 거리 ∝ v² ∝ PWM² 보정 때문.
+- 모든 PWM 출력 × `SPEED_SCALE` ([`drive()`](Controller.cpp#L688)에서 일괄).
+- 거의 모든 delay ÷ `SPEED_SCALE` (시간 늘려 같은 각도/거리 유지) — RampTurn 의 step/hold, 정렬 dance, 교차로 통과 전진 모두.
+
+**거리 보존 원리**: PWM 이 SCALE 만큼 줄면 같은 거리를 가는 데 시간이 1/SCALE 배 필요하므로 delay 를 ÷SCALE 합니다. 정렬 dance 의 후진(240ms)·정렬 크리프(120ms), 교차로 통과 전진(100ms) 모두 `SPEED_SCALE=1.0` 기준값이며 코드에서 `/SPEED_SCALE` 처리됩니다 ([LineTracer](Controller.cpp#L558)).
 
 **`SPEED_SCALE` 을 바꾸면 회전 각도가 미세하게 변합니다** — 정지마찰·관성이 PWM 에 비선형이라 시간 보정만으로 정확히 같은 각도가 안 나옵니다. 가급적 한 번 정하고 그 위에서 다른 값들을 잡으세요.
 
@@ -294,18 +274,28 @@ void Controller::LineTrace() {
 
 ## 8. 디버그 출력 활용
 
-본 스케치는 9600 baud Serial 로 다음을 출력합니다 — Arduino IDE Serial Monitor (또는 `arduino-cli monitor -c baudrate=9600`) 로 보세요.
+본 스케치는 9600 baud Serial 로 출력합니다 — Arduino IDE Serial Monitor (또는 `arduino-cli monitor -c baudrate=9600`) 로 보세요.
 
-- [LineTrace()](Controller.cpp#L428) 가 200 ms 마다 좌/우 raw + 정규화 값:
-  ```text
-  L_raw=320 R_raw=423 | L_n=0 R_n=12
-  ```
-  raw 값으로 EEPROM 캘리브 일치 여부 확인. 정규화 값이 항상 0 또는 1000 으로 클램프되면 캘리브 뒤집힘 의심.
-- 각 회전 진입/이탈: `Enter Pivot turn Left` / `Leave Pivot turn Right` 등.
-- 장애물 감지: `Obstacle! Backing to prev node.`
-- 동적 차단 등록: `Dyn-blocked cell (x,y) count=N`
-- Dead-end 백트래킹: `Dead-end at (x,y) — backtracking`
-- 네비게이션 진행: `Nav: (x1,y1) -> (x2,y2)`
+**디버그 토글 (실주행/대회 전 정리):**
+
+| 매크로 | 기본 | 켜면 |
+|---|---|---|
+| `DEBUG_TRACE` ([Settings.h:118](Settings.h#L118)) | **0** | `LineTrace` 가 200ms마다 raw/정규화 출력. ⚠ 핫 루프 Serial 블로킹으로 교차로 미인식 위험 — 센서 튜닝 시에만 |
+| `DEBUG_APPROACH_TONE` ([Settings.h:93](Settings.h#L93)) | **1** | 사전 감속 시작 순간 짧은 부저음(솔 G5). 감속 타이밍 귀로 확인 |
+| `DEBUG_TURN_PAUSE_MS` ([Settings.h:204](Settings.h#L204)) | **0** | 매 회전 후 그만큼 정지 → 각도기 측정 |
+
+**상시 출력(코드에 박힌 것):**
+
+- 부팅 시 캘리브 값: `rW=... lW=... rB=... lB=...`
+- **NavLog 자동 dump** — 직전 트립의 Eval/DeadEnd/DynBlock 흐름을 EEPROM 에서 읽어 출력 후 클리어 ([init](Controller.cpp#L278)). 엔트리 수는 `NAVLOG_ENTRIES`([Settings.h:259](Settings.h#L259)).
+- 네비게이션: `Nav: (x1,y1) -> (x2,y2)`, 매 교차로 `Eval (x,y) hd=.. conn0=.. afterBlk=.. fwd=.. pathLen=..`
+- 데드엔드/우회: `Dead-end at (x,y) — turn + step backtracking`, `Dyn-blocked cell (x,y) count=N`, `Nav STUCK: ...`
+- 교차로 카운트: `LINE!!! :N`
+- 회전 진입/이탈: `Enter Pivot turn Left` / `Leave Pivot turn Right` 등
+- 장애물: `sensor front C/L/R : c / l / r` (CheckObstacle 매회), `Obstacle! Backing to prev node.`, `Obstacle! Reversing...`
+- 미등록 도시: `Unknown city UID: [..]`, 우회 실패: `Forward nav failed — returning to warehouse with cargo.`
+
+> 부저는 디버그 외에도 출발 멜로디([`PlayMelody`](Controller.cpp#L844) "도-파-라")와 교차로 통과 순간 "도"(C6) 가 울립니다.
 
 ---
 
@@ -313,6 +303,9 @@ void Controller::LineTrace() {
 
 1. **배터리 전압 충분한가?** 낮으면 모터 토크 떨어져 회전 부족.
 2. **바퀴·모터 마운트가 흔들리지 않는가?** 슬립 발생 시 회전각 들쭉날쭉.
-3. **바닥 마찰이 일정한가?** 매끈한 바닥과 카펫에서 회전각 다름. 캘리브 환경과 운영 환경 일치시키기.
-4. **정밀 정렬은 y=0/7 에서만 작동**합니다 ([LineTracer](Controller.cpp#L384) `_preciseRealign`). 중간 행에서는 미세 어긋남 누적 가능 — 누적이 크면 더 잦은 정밀 정렬을 고려.
-5. **`_motorCalibL/R` 이 NaN / 0 이 아닌가?** EEPROM 미초기화 보드면 그럴 수 있음. 시작 시 Serial 로 찍히는 `rW lW rB lB` 값이 정상 범위인지 첫 줄에서 확인.
+3. **바닥 마찰이 일정한가?** 매끈한 바닥과 카펫에서 회전각 다름. 캘리브 환경과 운영 환경 일치.
+4. **화물 적재(`_CARGO`)와 비적재 값을 각각 맞췄는가?** 한쪽만 맞추면 다른 쪽이 어긋남 (§4.1).
+5. **정밀 정렬은 y=0(창고)/y=7(도시)에서만 작동**합니다 ([LineTracer](Controller.cpp#L558) `_preciseRealign`). 중간 행에서는 미세 어긋남 누적 가능.
+6. **`TURN_RAMP_*` 를 만진 뒤 `*_DELAY_MS` 재보정했는가?** 가감속이 회전각을 보탭니다 (§4.1).
+7. **`_motorCalibL/R` 이 NaN / 0 이 아닌가?** 시작 시 Serial `rW lW rB lB` 첫 줄로 확인 (§6).
+8. **실주행 전 `DEBUG_TRACE=0`, `DEBUG_TURN_PAUSE_MS=0` 확인** — 켜진 채면 주행이 느려지거나 멈춤 (§8).
