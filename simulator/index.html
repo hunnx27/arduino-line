@@ -1,0 +1,650 @@
+<!DOCTYPE html>
+<html lang="ko">
+<head>
+<meta charset="UTF-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+<title>arduino-line 네비게이터 시뮬레이터</title>
+<!-- React + Babel standalone: 빌드 도구 없이 이 파일만 브라우저로 열면 동작 -->
+<script src="https://unpkg.com/react@18/umd/react.development.js" crossorigin></script>
+<script src="https://unpkg.com/react-dom@18/umd/react-dom.development.js" crossorigin></script>
+<script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+<style>
+  :root { --cell: 54px; --gap: 4px; }
+  * { box-sizing: border-box; }
+  body {
+    margin: 0; padding: 20px;
+    font-family: -apple-system, "Segoe UI", "Apple SD Gothic Neo", sans-serif;
+    background: #0f1117; color: #e6e6e6;
+  }
+  h1 { font-size: 18px; margin: 0 0 4px; }
+  .sub { color: #8a92a6; font-size: 13px; margin-bottom: 16px; }
+  .wrap { display: flex; gap: 24px; flex-wrap: wrap; align-items: flex-start; }
+  .panel { background: #171a23; border: 1px solid #262b38; border-radius: 10px; padding: 16px; }
+  .controls { display: flex; flex-direction: column; gap: 14px; min-width: 240px; }
+  .row { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+  label.lbl { font-size: 12px; color: #8a92a6; display: block; margin-bottom: 6px; }
+  button {
+    background: #2a3142; color: #e6e6e6; border: 1px solid #3a4256;
+    border-radius: 7px; padding: 7px 12px; cursor: pointer; font-size: 13px;
+  }
+  button:hover { background: #353d52; }
+  button.active { background: #3b82f6; border-color: #3b82f6; color: #fff; }
+  button:disabled { opacity: .4; cursor: not-allowed; }
+  .grid { display: grid; gap: var(--gap); }
+  .cell {
+    width: var(--cell); height: var(--cell); border-radius: 7px;
+    display: flex; align-items: center; justify-content: center;
+    font-size: 11px; position: relative; user-select: none; cursor: pointer;
+    background: #1d2230; border: 1px solid #2b3140; color: #6b7385;
+  }
+  .cell.off    { background: transparent; border: 1px dashed #333a4a; }
+  .cell.wh     { background: #1e3a2f; border-color: #2e6b4f; color: #9ff0c4; }
+  .cell.city   { background: #2c2440; border-color: #5b46a0; color: #cdb6ff; }
+  .cell.start  { background: #243044; border-color: #3a5680; color: #9cc4ff; }
+  .cell.blocked{ background: #3a2030; border-color: #7a3050; color: #ff9bb5; }
+  .cell.dyn    { background: #4a2a18; border-color: #a55a2a; color: #ffc08a; }
+  .cell.offlimit { background: #1a1d28; border-color: #2a2f3e; color: #44495a; }
+  .cell .coord { position: absolute; top: 3px; left: 4px; font-size: 9px; opacity: .55; }
+  .cell .tag   { font-size: 10px; font-weight: 600; }
+  .trail { position: absolute; inset: 0; border-radius: 7px; box-shadow: inset 0 0 0 2px #3b82f6aa; }
+  .robot {
+    position: absolute; width: 30px; height: 30px; border-radius: 50%;
+    background: radial-gradient(circle at 35% 30%, #ffe08a, #f59e0b);
+    box-shadow: 0 0 12px #f59e0baa; display: flex; align-items: center; justify-content: center;
+    transition: transform .15s; z-index: 5; font-size: 16px; color: #3a2400;
+  }
+  .legend { display: flex; gap: 14px; flex-wrap: wrap; font-size: 12px; color: #8a92a6; margin-top: 12px; }
+  .legend span { display: inline-flex; align-items: center; gap: 5px; }
+  .chip { width: 14px; height: 14px; border-radius: 4px; display: inline-block; }
+  .stats { font-size: 13px; line-height: 1.7; }
+  .stats b { color: #fff; }
+  .log {
+    font-family: ui-monospace, Menlo, monospace; font-size: 11px; line-height: 1.5;
+    background: #0b0d13; border: 1px solid #222; border-radius: 8px; padding: 10px;
+    height: 280px; overflow-y: auto; white-space: pre-wrap; color: #9fb0c8; width: 320px;
+  }
+  .log .turn { color: #ffc08a; }
+  .log .move { color: #7fd1a0; }
+  .log .dead { color: #ff9bb5; }
+  .log .phase { color: #9cc4ff; font-weight: 600; }
+  .badge { font-size: 11px; padding: 2px 7px; border-radius: 10px; background: #2a3142; }
+  input[type=range] { width: 140px; }
+</style>
+</head>
+<body>
+<div id="root"></div>
+
+<script type="text/babel">
+const { useState, useEffect, useRef, useMemo, useCallback } = React;
+
+// =====================================================================
+// 1) Controller.cpp 의 내비게이션 로직을 그대로 JS 로 포팅
+//    (lookupConn / desiredHeading / mask* / navigateTo 데드엔드 백트래킹)
+// =====================================================================
+const N = 0x01, E = 0x02, S = 0x04, W = 0x08;        // Controller.h CONN_*
+const HD = { N: 0, E: 1, S: 2, W: 3 };               // Heading enum 순서
+const HD_NAME = ['N', 'E', 'S', 'W'];
+const HD_ARROW = { 0: '↑', 1: '→', 2: '↓', 3: '←' }; // N=row 감소=위쪽
+
+const headingDx = (h) => (h === HD.E ? 1 : h === HD.W ? -1 : 0);
+const headingDy = (h) => (h === HD.N ? -1 : h === HD.S ? 1 : 0);
+
+// Settings_robot1.h / Settings_robot2.h 값
+const ROBOTS = {
+  1: {
+    cols: 4, rows: 8,
+    warehouse: { x: 3, y: 0 },
+    start: { x: -1, y: 3, heading: HD.E },
+    navMinX: -128,
+    visitLimit: 2,
+    blocked: [{ x: 1, y: 6 }, { x: 3, y: 6 }, { x: 2, y: 4 }],
+    cities: [
+      { name: '서울', x: 0, y: 7 }, { name: '인천', x: 1, y: 7 },
+      { name: '세종', x: 2, y: 7 }, { name: '대전', x: 3, y: 7 },
+    ],
+  },
+  2: {
+    cols: 8, rows: 8,
+    warehouse: { x: 5, y: 0 },        // 4+1
+    start: { x: -1, y: 2, heading: HD.E },
+    navMinX: 4,                       // 횡단 후 col<4 진입 금지
+    visitLimit: 2,
+    blocked: [{ x: 6, y: 3 }, { x: 7, y: 5 }, { x: 5, y: 5 }],
+    cities: [
+      { name: '대구', x: 4, y: 7 }, { name: '광주', x: 5, y: 7 },
+      { name: '춘천', x: 6, y: 7 }, { name: '제주', x: 7, y: 7 },
+    ],
+  },
+};
+
+// --- 내비게이터 상태를 들고 다니는 객체 (Controller 멤버 대응) ---
+function makeBot(cfg) {
+  return {
+    cfg,
+    pose: { ...cfg.start },
+    dynBlocked: [],                    // g_dynBlocked (전원 OFF 전까지 유지)
+    navMinX: -128,                     // 처음엔 무제한, 창고 도착 후 cfg.navMinX
+    // navigateTo 임시 상태
+    visit: new Array(cfg.cols * cfg.rows).fill(0),
+    pathX: [], pathY: [],
+    blockedAtX: -128, blockedAtY: -128, blockedDirBit: 0,
+  };
+}
+
+function lookupConn(cfg, x, y) {
+  if (x === cfg.start.x && y === cfg.start.y) return E;      // 시작 패드: 동쪽만
+  if (x < 0 || x >= cfg.cols || y < 0 || y >= cfg.rows) return 0;
+  let c = 0;
+  if (y - 1 >= 0) c |= N;
+  if (y + 1 < cfg.rows) c |= S;
+  if (x + 1 < cfg.cols) c |= E;
+  if (x - 1 >= 0) c |= W;
+  return c;
+}
+
+const isBlocked = (bot, x, y) =>
+  bot.cfg.blocked.some(b => b.x === x && b.y === y) ||
+  bot.dynBlocked.some(b => b.x === x && b.y === y);
+
+function maskBlockedNeighbors(bot, x, y, conn) {
+  if ((conn & N) && isBlocked(bot, x, y - 1)) conn &= ~N;
+  if ((conn & S) && isBlocked(bot, x, y + 1)) conn &= ~S;
+  if ((conn & E) && isBlocked(bot, x + 1, y)) conn &= ~E;
+  if ((conn & W) && isBlocked(bot, x - 1, y)) conn &= ~W;
+  return conn;
+}
+
+const vIdx = (cfg, x, y) => y * cfg.cols + x;
+function maskOverVisited(bot, x, y, conn) {
+  const { cfg, visit, cfg: { visitLimit } } = bot;
+  if ((conn & N) && y - 1 >= 0 && visit[vIdx(cfg, x, y - 1)] >= visitLimit) conn &= ~N;
+  if ((conn & S) && y + 1 < cfg.rows && visit[vIdx(cfg, x, y + 1)] >= visitLimit) conn &= ~S;
+  if ((conn & E) && x + 1 < cfg.cols && visit[vIdx(cfg, x + 1, y)] >= visitLimit) conn &= ~E;
+  if ((conn & W) && x - 1 >= 0 && visit[vIdx(cfg, x - 1, y)] >= visitLimit) conn &= ~W;
+  return conn;
+}
+
+function maskCellsOnPath(bot, x, y, conn) {
+  const len = bot.pathX.length;
+  if (len < 2) return conn;
+  const ddx = bot.pathX[len - 2] - x;
+  const ddy = bot.pathY[len - 2] - y;
+  if (ddy === -1 && ddx === 0) conn &= ~N;
+  else if (ddy === 1 && ddx === 0) conn &= ~S;
+  else if (ddx === 1 && ddy === 0) conn &= ~E;
+  else if (ddx === -1 && ddy === 0) conn &= ~W;
+  return conn;
+}
+
+// Controller.cpp:59 desiredHeading — 현재 heading 유지 → Y우선 → perpendicular fallback
+function desiredHeading(dx, dy, conn, h) {
+  if (h === HD.N && dy < 0 && (conn & N)) return HD.N;
+  if (h === HD.S && dy > 0 && (conn & S)) return HD.S;
+  if (h === HD.E && dx > 0 && (conn & E)) return HD.E;
+  if (h === HD.W && dx < 0 && (conn & W)) return HD.W;
+  if (dy < 0 && (conn & N)) return HD.N;
+  if (dy > 0 && (conn & S)) return HD.S;
+  if (dx > 0 && (conn & E)) return HD.E;
+  if (dx < 0 && (conn & W)) return HD.W;
+  if (dy !== 0) { if (conn & E) return HD.E; if (conn & W) return HD.W; }
+  else if (dx !== 0) { if (conn & N) return HD.N; if (conn & S) return HD.S; }
+  return -1;
+}
+
+const incVisit = (bot, x, y) => {
+  if (x < 0 || x >= bot.cfg.cols || y < 0 || y >= bot.cfg.rows) return;
+  bot.visit[vIdx(bot.cfg, x, y)]++;
+};
+const addDyn = (bot, x, y) => {
+  if (x < 0 || x >= bot.cfg.cols || y < 0 || y >= bot.cfg.rows) return;
+  if (!bot.dynBlocked.some(b => b.x === x && b.y === y)) bot.dynBlocked.push({ x, y });
+};
+
+// rotateToHeading: heading 만 바꾸고 turn 이벤트(프레임) 기록
+function rotateTo(bot, target, frames, phase) {
+  if (bot.pose.heading === target) return;
+  const delta = ((target - bot.pose.heading) + 4) % 4;
+  const deg = delta === 2 ? 180 : 90;
+  bot.pose.heading = target;
+  frames.push({
+    type: 'turn', phase, deg,
+    pose: { ...bot.pose },
+    msg: `회전 ${deg}° → ${HD_NAME[target]}`,
+  });
+}
+
+// navigateTo 포팅. liveObs = 시뮬레이터에서 사용자가 놓은 "숨은 장애물"
+//   (진입 시도 시점에만 발각 → DoLineTrace 실패로 모델링)
+function navigateTo(bot, tx, ty, frames, phase, liveObs) {
+  frames.push({ type: 'nav', phase, pose: { ...bot.pose },
+    msg: `Nav (${bot.pose.x},${bot.pose.y}) → (${tx},${ty})` });
+
+  bot.blockedAtX = -128; bot.blockedAtY = -128; bot.blockedDirBit = 0;
+  bot.pathX = [bot.pose.x]; bot.pathY = [bot.pose.y];
+  bot.visit.fill(0);
+  incVisit(bot, bot.pose.x, bot.pose.y);
+
+  let guard = 0;
+  while (bot.pose.x !== tx || bot.pose.y !== ty) {
+    if (++guard > 800) { frames.push({ type: 'dead', phase, pose: { ...bot.pose }, msg: 'guard 초과 — 중단' }); return false; }
+    const dx = tx - bot.pose.x, dy = ty - bot.pose.y;
+
+    let conn0 = lookupConn(bot.cfg, bot.pose.x, bot.pose.y);
+    let conn = maskBlockedNeighbors(bot, bot.pose.x, bot.pose.y, conn0);
+    conn = maskOverVisited(bot, bot.pose.x, bot.pose.y, conn);
+    let fwd = maskCellsOnPath(bot, bot.pose.x, bot.pose.y, conn);
+
+    if ((fwd & W) && bot.pose.x - 1 < bot.navMinX) fwd &= ~W;   // 맵 격리
+    if (bot.blockedAtX === bot.pose.x && bot.blockedAtY === bot.pose.y) fwd &= ~bot.blockedDirBit;
+
+    if (fwd === 0) {
+      // 데드엔드 — 부모로 180/90 회전 후 한 칸 복귀, 현재 칸 영구 차단
+      frames.push({ type: 'dead', phase, pose: { ...bot.pose }, msg: `막다른 길 (${bot.pose.x},${bot.pose.y}) — 백트래킹` });
+      if (bot.pathX.length <= 1) { frames.push({ type: 'dead', phase, pose: { ...bot.pose }, msg: 'STUCK: 시작칸이 막힘' }); return false; }
+      const px = bot.pathX[bot.pathX.length - 2], py = bot.pathY[bot.pathY.length - 2];
+      if (px < 0) { frames.push({ type: 'dead', phase, pose: { ...bot.pose }, msg: 'STUCK: 부모가 그리드 밖' }); return false; }
+      const bdx = px - bot.pose.x, bdy = py - bot.pose.y;
+      const back = bdy === -1 ? HD.N : bdy === 1 ? HD.S : bdx === 1 ? HD.E : HD.W;
+      rotateTo(bot, back, frames, phase);
+      addDyn(bot, bot.pose.x, bot.pose.y);
+      bot.pathX.pop(); bot.pathY.pop();
+      bot.pose.x = px; bot.pose.y = py;
+      incVisit(bot, px, py);
+      bot.blockedAtX = -128;
+      frames.push({ type: 'move', phase, pose: { ...bot.pose }, msg: `복귀 → (${px},${py})` });
+      continue;
+    }
+
+    let desired = desiredHeading(dx, dy, fwd, bot.pose.heading);
+    if (desired === -1) {
+      desired = (fwd & N) ? HD.N : (fwd & S) ? HD.S : (fwd & E) ? HD.E : HD.W;
+    }
+    rotateTo(bot, desired, frames, phase);
+
+    const nx = bot.pose.x + headingDx(desired), ny = bot.pose.y + headingDy(desired);
+
+    // DoLineTrace: 숨은 장애물(liveObs) 칸을 처음 진입 시도하면 실패
+    const hitLive = liveObs.some(o => o.x === nx && o.y === ny) && !bot.dynBlocked.some(b => b.x === nx && b.y === ny);
+    if (!hitLive) {
+      bot.blockedAtX = -128;
+      bot.pose.x = nx; bot.pose.y = ny;
+      incVisit(bot, nx, ny);
+      bot.pathX.push(nx); bot.pathY.push(ny);
+      frames.push({ type: 'move', phase, pose: { ...bot.pose }, msg: `이동 → (${nx},${ny})` });
+    } else {
+      addDyn(bot, nx, ny);
+      bot.blockedAtX = bot.pose.x; bot.blockedAtY = bot.pose.y;
+      bot.blockedDirBit = desired === HD.N ? N : desired === HD.E ? E : desired === HD.S ? S : W;
+      frames.push({ type: 'dead', phase, pose: { ...bot.pose }, msg: `장애물 발견 (${nx},${ny}) — 후진/우회` });
+    }
+  }
+  return true;
+}
+
+// =====================================================================
+// 1-b) BFS 모드 — conn 그래프 위의 최단경로. 장애물 발견 시 그 칸 차단 후 재계획.
+//      (그리드 ≤64칸이라 매 스텝 BFS 해도 즉시. greedy DFS 의 헤맴을 제거)
+// =====================================================================
+function allowedConn(bot, x, y) {
+  let c = maskBlockedNeighbors(bot, x, y, lookupConn(bot.cfg, x, y));
+  if ((c & W) && x - 1 < bot.navMinX) c &= ~W;   // 맵 격리
+  return c;
+}
+// 현재 pose → (tx,ty) 최단경로를 [{x,y}, ...] 로 반환 (목표 직전까지). 없으면 null.
+function bfsPath(bot, tx, ty) {
+  const { x: sx, y: sy } = bot.pose;
+  if (sx === tx && sy === ty) return [];
+  const key = (x, y) => x + ',' + y;
+  const prev = {}, seen = new Set([key(sx, sy)]), q = [[sx, sy]];
+  while (q.length) {
+    const [x, y] = q.shift();
+    const c = allowedConn(bot, x, y);
+    const nb = [[N, x, y - 1], [S, x, y + 1], [E, x + 1, y], [W, x - 1, y]];
+    for (const [bit, nx, ny] of nb) {
+      if (!(c & bit)) continue;
+      const k = key(nx, ny);
+      if (seen.has(k)) continue;
+      seen.add(k); prev[k] = [x, y];
+      if (nx === tx && ny === ty) {
+        const path = []; let cx = nx, cy = ny;
+        while (!(cx === sx && cy === sy)) { path.unshift({ x: cx, y: cy }); const p = prev[key(cx, cy)]; cx = p[0]; cy = p[1]; }
+        return path;
+      }
+      q.push([nx, ny]);
+    }
+  }
+  return null;
+}
+function navigateBFS(bot, tx, ty, frames, phase, liveObs) {
+  frames.push({ type: 'nav', phase, pose: { ...bot.pose }, msg: `BFS (${bot.pose.x},${bot.pose.y}) → (${tx},${ty})` });
+  let guard = 0;
+  while (bot.pose.x !== tx || bot.pose.y !== ty) {
+    if (++guard > 200) { frames.push({ type: 'dead', phase, pose: { ...bot.pose }, msg: 'guard 초과' }); return false; }
+    const path = bfsPath(bot, tx, ty);
+    if (path === null) { frames.push({ type: 'dead', phase, pose: { ...bot.pose }, msg: 'STUCK: 경로 없음' }); return false; }
+    let rerouted = false;
+    for (const { x: nx, y: ny } of path) {
+      const dx = nx - bot.pose.x, dy = ny - bot.pose.y;
+      const d = dy === -1 ? HD.N : dy === 1 ? HD.S : dx === 1 ? HD.E : HD.W;
+      rotateTo(bot, d, frames, phase);
+      const hitLive = liveObs.some(o => o.x === nx && o.y === ny) && !bot.dynBlocked.some(b => b.x === nx && b.y === ny);
+      if (hitLive) {
+        addDyn(bot, nx, ny);
+        frames.push({ type: 'dead', phase, pose: { ...bot.pose }, msg: `장애물 발견 (${nx},${ny}) — 재계획` });
+        rerouted = true; break;
+      }
+      bot.pose.x = nx; bot.pose.y = ny;
+      frames.push({ type: 'move', phase, pose: { ...bot.pose }, msg: `이동 → (${nx},${ny})` });
+    }
+    if (!rerouted && (bot.pose.x !== tx || bot.pose.y !== ty)) return false;
+  }
+  return true;
+}
+
+// 전체 왕복 시퀀스 시뮬레이션 → 프레임 배열 + 요약
+function simulate(cfg, cityIdx, liveObs, mode) {
+  const bot = makeBot(cfg);
+  const frames = [];
+  const city = cfg.cities[cityIdx];
+  const nav = mode === 'bfs' ? navigateBFS : navigateTo;
+
+  // 1) 시작 RFID → 창고 (navMinX 무제한)
+  nav(bot, cfg.warehouse.x, cfg.warehouse.y, frames, 'init', liveObs);
+  bot.navMinX = cfg.navMinX;            // 횡단 완료 → 맵 격리 활성화
+  rotateTo(bot, HD.S, frames, 'init');  // 도시 방향 정렬
+
+  // 2) 창고 → 도시
+  const reached = nav(bot, city.x, city.y, frames, 'to', liveObs);
+  if (reached) rotateTo(bot, HD.N, frames, 'to');
+
+  // 3) 도시 → 창고
+  nav(bot, cfg.warehouse.x, cfg.warehouse.y, frames, 'back', liveObs);
+  rotateTo(bot, HD.S, frames, 'back');
+
+  // 요약: 단계별 회전/이동 카운트
+  const summary = { reached };
+  for (const ph of ['init', 'to', 'back']) {
+    summary[ph] = {
+      turns: frames.filter(f => f.phase === ph && f.type === 'turn').length,
+      moves: frames.filter(f => f.phase === ph && f.type === 'move').length,
+    };
+  }
+  return { frames, summary };
+}
+
+// =====================================================================
+// 2) UI
+// =====================================================================
+const PHASE_NAME = { init: '출발→창고', to: '창고→도시', back: '도시→창고' };
+
+function App() {
+  const [robotId, setRobotId] = useState(1);
+  const [cityIdx, setCityIdx] = useState(0);
+  const [liveObs, setLiveObs] = useState([]);     // 동적 장애물 (진입 시 발각)
+  const [staticObs, setStaticObs] = useState(() => ROBOTS[1].blocked.map(b => ({ ...b }))); // 고정 장애물 (계획 시 이미 앎)
+  const [editTarget, setEditTarget] = useState('dyn');   // 클릭 시 놓을 것: 'dyn' | 'static'
+  const [frameIdx, setFrameIdx] = useState(0);
+  const [playing, setPlaying] = useState(false);
+  const [speed, setSpeed] = useState(350);
+  const [mode, setMode] = useState('greedy');     // 'greedy' | 'bfs'
+
+  // cfg.blocked 를 편집 가능한 staticObs 로 치환한 유효 설정
+  const cfg = useMemo(() => ({ ...ROBOTS[robotId], blocked: staticObs }), [robotId, staticObs]);
+
+  const { frames, summary } = useMemo(
+    () => simulate(cfg, cityIdx, liveObs, mode),
+    [cfg, cityIdx, liveObs, mode]
+  );
+
+  // 두 모드 동시 비교 (회전/이동 합계)
+  const compare = useMemo(() => {
+    const tally = (m) => {
+      const s = simulate(cfg, cityIdx, liveObs, m).summary;
+      return {
+        turns: s.init.turns + s.to.turns + s.back.turns,
+        moves: s.init.moves + s.to.moves + s.back.moves,
+        toTurns: s.to.turns, reached: s.reached,
+      };
+    };
+    return { greedy: tally('greedy'), bfs: tally('bfs') };
+  }, [cfg, cityIdx, liveObs]);
+
+  // 로봇 바꾸면 그 로봇 기본 고정장애물로 복원 + 동적 제거 + 도시 초기화
+  useEffect(() => {
+    setStaticObs(ROBOTS[robotId].blocked.map(b => ({ ...b })));
+    setLiveObs([]); setCityIdx(0);
+  }, [robotId]);
+
+  // 도시/장애물/모드 바꾸면 애니메이션 리셋
+  useEffect(() => { setFrameIdx(0); setPlaying(false); }, [robotId, cityIdx, liveObs, staticObs, mode]);
+
+  useEffect(() => {
+    if (!playing) return;
+    if (frameIdx >= frames.length - 1) { setPlaying(false); return; }
+    const t = setTimeout(() => setFrameIdx(i => Math.min(i + 1, frames.length - 1)), speed);
+    return () => clearTimeout(t);
+  }, [playing, frameIdx, frames, speed]);
+
+  const cur = frames[frameIdx] || { pose: { ...cfg.start }, phase: 'init', type: 'nav' };
+  const pose = cur.pose;
+
+  // 현재 프레임까지의 이동 trail
+  const trail = useMemo(() => {
+    const set = new Set();
+    for (let i = 0; i <= frameIdx; i++) {
+      const p = frames[i]?.pose;
+      if (p) set.add(`${p.x},${p.y}`);
+    }
+    return set;
+  }, [frameIdx, frames]);
+
+  const toggleObs = useCallback((x, y) => {
+    // 창고/도시/시작/그리드밖 위에는 못 놓음
+    if (x < 0) return;
+    if (x === cfg.warehouse.x && y === cfg.warehouse.y) return;
+    if (cfg.cities.some(c => c.x === x && c.y === y)) return;
+    const has = (arr) => arr.some(o => o.x === x && o.y === y);
+    const drop = (arr) => arr.filter(o => !(o.x === x && o.y === y));
+    if (editTarget === 'static') {
+      setLiveObs(prev => drop(prev));   // 한 칸은 한 종류만
+      setStaticObs(prev => has(prev) ? drop(prev) : [...prev, { x, y }]);
+    } else {
+      setStaticObs(prev => drop(prev));
+      setLiveObs(prev => has(prev) ? drop(prev) : [...prev, { x, y }]);
+    }
+  }, [cfg, editTarget]);
+
+  // 그리드 셀 (x=-1 시작 패드 포함)
+  const colStart = -1;
+  const nCols = cfg.cols - colStart;
+  const cellPx = 54, gapPx = 4;
+
+  return (
+    <div>
+      <h1>arduino-line 좌표 네비게이터 시뮬레이터</h1>
+      <div className="sub">Controller.cpp 의 navigateTo / desiredHeading 로직을 그대로 포팅 · 회전·우회·데드엔드 백트래킹 재현</div>
+
+      <div className="wrap">
+        {/* 컨트롤 */}
+        <div className="panel controls">
+          <div>
+            <label className="lbl">로봇</label>
+            <div className="row">
+              {[1, 2].map(id => (
+                <button key={id} className={robotId === id ? 'active' : ''} onClick={() => setRobotId(id)}>
+                  로봇{id}
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="lbl">내비게이션 모드</label>
+            <div className="row">
+              <button className={mode === 'greedy' ? 'active' : ''} onClick={() => setMode('greedy')}>
+                Greedy (현재 펌웨어)
+              </button>
+              <button className={mode === 'bfs' ? 'active' : ''} onClick={() => setMode('bfs')}>
+                BFS (최단경로)
+              </button>
+            </div>
+          </div>
+
+          <div>
+            <label className="lbl">목적지 도시</label>
+            <div className="row">
+              {cfg.cities.map((c, i) => (
+                <button key={c.name} className={cityIdx === i ? 'active' : ''} onClick={() => setCityIdx(i)}>
+                  {c.name} ({c.x},{c.y})
+                </button>
+              ))}
+            </div>
+          </div>
+
+          <div>
+            <label className="lbl">재생</label>
+            <div className="row">
+              <button onClick={() => { if (frameIdx >= frames.length - 1) setFrameIdx(0); setPlaying(p => !p); }}>
+                {playing ? '⏸ 일시정지' : '▶ 재생'}
+              </button>
+              <button disabled={playing} onClick={() => setFrameIdx(i => Math.max(0, i - 1))}>◀ 이전</button>
+              <button disabled={playing} onClick={() => setFrameIdx(i => Math.min(frames.length - 1, i + 1))}>다음 ▶</button>
+              <button onClick={() => { setPlaying(false); setFrameIdx(0); }}>↺ 리셋</button>
+            </div>
+          </div>
+
+          <div>
+            <label className="lbl">속도 ({speed}ms/step)</label>
+            <input type="range" min="80" max="800" step="20" value={speed}
+              onChange={e => setSpeed(Number(e.target.value))} />
+          </div>
+
+          <div>
+            <label className="lbl">장애물 편집 — 클릭 시 놓을 것</label>
+            <div className="row">
+              <button className={editTarget === 'dyn' ? 'active' : ''} onClick={() => setEditTarget('dyn')}>
+                ⚠ 동적 (진입 시 발각)
+              </button>
+              <button className={editTarget === 'static' ? 'active' : ''} onClick={() => setEditTarget('static')}>
+                ✕ 고정 (계획 시 이미 앎)
+              </button>
+            </div>
+            <div className="sub" style={{ margin: '6px 0 0' }}>
+              {editTarget === 'static'
+                ? '고정 장애물 = 펌웨어 BLOCKED_CELLS. 플래너가 미리 알고 우회 (회전수에 반영).'
+                : '동적 장애물 = IR 로 그 칸 진입 직전 발각 → 차단 후 재계획.'}
+            </div>
+            <div className="row" style={{ marginTop: 8 }}>
+              {liveObs.length > 0 && <button onClick={() => setLiveObs([])}>동적 전체 제거</button>}
+              <button onClick={() => setStaticObs([])}>고정 전체 제거</button>
+              <button onClick={() => setStaticObs(ROBOTS[robotId].blocked.map(b => ({ ...b })))}>고정 기본값 복원</button>
+            </div>
+          </div>
+
+          <div className="stats panel" style={{ background: '#0f1320' }}>
+            <div>현재 단계: <span className="badge">{PHASE_NAME[cur.phase]}</span></div>
+            <div>pose: <b>({pose.x},{pose.y})</b> heading <b>{HD_NAME[pose.heading]} {HD_ARROW[pose.heading]}</b></div>
+            <div>프레임: {frameIdx + 1} / {frames.length}</div>
+            <hr style={{ borderColor: '#262b38' }} />
+            <div><b>회전 횟수 (피벗+180°)</b></div>
+            <div>· 출발→창고: <b>{summary.init.turns}</b>회 / {summary.init.moves}칸</div>
+            <div>· 창고→도시: <b>{summary.to.turns}</b>회 / {summary.to.moves}칸</div>
+            <div>· 도시→창고: <b>{summary.back.turns}</b>회 / {summary.back.moves}칸</div>
+            {!summary.reached && <div style={{ color: '#ff9bb5' }}>⚠ 도시 도달 실패 (STUCK)</div>}
+          </div>
+
+          <div className="stats panel" style={{ background: '#0f1320' }}>
+            <div><b>두 모드 비교</b> (왕복 합계)</div>
+            <div style={{ display: 'grid', gridTemplateColumns: 'auto auto auto', gap: '2px 14px', marginTop: 6 }}>
+              <span style={{ color: '#8a92a6' }}></span><span style={{ color: '#8a92a6' }}>회전</span><span style={{ color: '#8a92a6' }}>이동</span>
+              <span className={mode === 'greedy' ? '' : ''} style={{ color: mode === 'greedy' ? '#fff' : '#8a92a6' }}>Greedy</span>
+              <b>{compare.greedy.turns}</b><b>{compare.greedy.moves}</b>
+              <span style={{ color: mode === 'bfs' ? '#fff' : '#8a92a6' }}>BFS</span>
+              <b style={{ color: '#7fd1a0' }}>{compare.bfs.turns}</b><b style={{ color: '#7fd1a0' }}>{compare.bfs.moves}</b>
+            </div>
+            {compare.greedy.turns > compare.bfs.turns &&
+              <div style={{ color: '#ffc08a', marginTop: 6 }}>
+                → 도시行 회전 {compare.greedy.toTurns} vs {compare.bfs.toTurns}회.
+                Greedy 가 {compare.greedy.turns - compare.bfs.turns}회 더 돎.
+              </div>}
+            {!compare.greedy.reached && <div style={{ color: '#ff9bb5' }}>Greedy: STUCK</div>}
+            {!compare.bfs.reached && <div style={{ color: '#ff9bb5' }}>BFS: STUCK</div>}
+          </div>
+        </div>
+
+        {/* 그리드 */}
+        <div className="panel">
+          <div className="grid" style={{
+            gridTemplateColumns: `repeat(${nCols}, ${cellPx}px)`,
+            gridTemplateRows: `repeat(${cfg.rows}, ${cellPx}px)`,
+          }}>
+            {Array.from({ length: cfg.rows }).map((_, y) =>
+              Array.from({ length: nCols }).map((_, ci) => {
+                const x = ci + colStart;
+                const isStart = x === cfg.start.x && y === cfg.start.y;
+                const off = x < 0 && !isStart;
+                const isWh = x === cfg.warehouse.x && y === cfg.warehouse.y;
+                const cityHere = cfg.cities.find(c => c.x === x && c.y === y);
+                const isBlk = cfg.blocked.some(b => b.x === x && b.y === y);
+                const isDyn = liveObs.some(o => o.x === x && o.y === y);
+                const offlimit = x >= 0 && x < cfg.navMinX && cur.phase !== 'init';
+                const here = pose.x === x && pose.y === y;
+                const onTrail = trail.has(`${x},${y}`);
+
+                let cls = 'cell';
+                if (off) cls += ' off';
+                else if (isStart) cls += ' start';
+                else if (isWh) cls += ' wh';
+                else if (isBlk) cls += ' blocked';
+                else if (isDyn) cls += ' dyn';
+                else if (cityHere) cls += ' city';
+                else if (offlimit) cls += ' offlimit';
+
+                return (
+                  <div key={`${x},${y}`} className={cls}
+                    style={{ gridColumn: ci + 1, gridRow: y + 1 }}
+                    onClick={() => toggleObs(x, y)}>
+                    {!off && <span className="coord">{x},{y}</span>}
+                    {onTrail && !here && <span className="trail" />}
+                    {isStart && <span className="tag">START</span>}
+                    {isWh && <span className="tag">창고</span>}
+                    {cityHere && <span className="tag">{cityHere.name}</span>}
+                    {isBlk && <span className="tag">✕</span>}
+                    {isDyn && <span className="tag">⚠</span>}
+                    {here && <span className="robot" style={{ transform: `rotate(${pose.heading * 90}deg)` }}>▲</span>}
+                  </div>
+                );
+              })
+            )}
+          </div>
+
+          <div className="legend">
+            <span><i className="chip" style={{ background: '#1e3a2f' }} />창고</span>
+            <span><i className="chip" style={{ background: '#2c2440' }} />도시</span>
+            <span><i className="chip" style={{ background: '#243044' }} />시작 RFID</span>
+            <span><i className="chip" style={{ background: '#3a2030' }} />정적 장애물</span>
+            <span><i className="chip" style={{ background: '#4a2a18' }} />동적 장애물(클릭)</span>
+            <span><i className="chip" style={{ background: '#1a1d28' }} />격리 경계(navMinX)</span>
+          </div>
+        </div>
+
+        {/* 로그 */}
+        <div className="panel">
+          <label className="lbl">시뮬레이션 로그 (현재 프레임까지)</label>
+          <div className="log" ref={el => { if (el) el.scrollTop = el.scrollHeight; }}>
+            {frames.slice(0, frameIdx + 1).map((f, i) => (
+              <div key={i} className={f.type === 'turn' ? 'turn' : f.type === 'move' ? 'move' : f.type === 'dead' ? 'dead' : 'phase'}>
+                {f.type === 'nav' ? `── [${PHASE_NAME[f.phase]}] ` : '  '}{f.msg}
+              </div>
+            ))}
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+</script>
+</body>
+</html>
