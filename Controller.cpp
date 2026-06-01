@@ -291,6 +291,9 @@ void Controller::init() {
     Serial.print(" lW="); Serial.print(_leftWhite);
     Serial.print(" rB="); Serial.print(_rightBlack);
     Serial.print(" lB="); Serial.println(_leftBlack);
+    Serial.print(F("ROBOT_ID=")); Serial.print(ROBOT_ID);
+    Serial.print(F(" GRID=")); Serial.print(GRID_COLS); Serial.print(F("x")); Serial.print(GRID_ROWS);
+    Serial.print(F(" WH=(")); Serial.print(WAREHOUSE_X); Serial.print(F(",")); Serial.print(WAREHOUSE_Y); Serial.println(F(")"));
 
     // 직전 트립 NavLog 자동 출력 후 버퍼 초기화
     navlogDump();
