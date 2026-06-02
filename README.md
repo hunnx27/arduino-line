@@ -12,7 +12,7 @@
 
 ## 1. 회전 함수 3종 — 구조
 
-세 회전 함수(`TurnHalf`, `PivotTurnLeft`, `PivotTurnRight`)는 모두 공통 프리미티브 [`RampTurn`](Controller.cpp#L733)을 호출합니다. RampTurn 은 **사다리꼴 속도 프로파일**로 돕니다:
+세 회전 함수(`TurnHalf`, `PivotTurnLeft`, `PivotTurnRight`)는 모두 공통 프리미티브 [`RampTurn`](Controller.cpp#L754)을 호출합니다. RampTurn 은 **사다리꼴 속도 프로파일**로 돕니다:
 
 ```
 가속(TURN_START_PWM → cruise) → 정속(cruise, holdMs) → 감속(cruise → TURN_START_PWM) → 정지 → 안정화(TURN_SETTLE_MS)
@@ -23,16 +23,16 @@
 - **가감속 구간도 회전을 보탭니다** — `TURN_RAMP_STEPS`/`TURN_RAMP_STEP_MS` 를 바꾸면 회전각이 같이 변하므로 `*_DELAY_MS` 로 재보정 필요.
 
 ### TurnHalf (≈180°)
-제자리 회전(왼쪽 후진 + 오른쪽 전진, 양 바퀴 같은 PWM). [Controller.cpp:772](Controller.cpp#L772).
+제자리 회전(왼쪽 후진 + 오른쪽 전진, 양 바퀴 같은 PWM). [Controller.cpp:793](Controller.cpp#L793).
 
 ### PivotTurnLeft / PivotTurnRight (≈90°)
-강쪽(바깥 바퀴) / 약쪽(안쪽 바퀴) PWM 을 비대칭으로 줘서 90° 회전. 두 PWM 차이가 클수록 돌면서 앞으로 쏠리는 완만한 호, 같으면 순수 제자리 회전. [Controller.cpp:781](Controller.cpp#L781) / [:793](Controller.cpp#L793).
+강쪽(바깥 바퀴) / 약쪽(안쪽 바퀴) PWM 을 비대칭으로 줘서 90° 회전. 두 PWM 차이가 클수록 돌면서 앞으로 쏠리는 완만한 호, 같으면 순수 제자리 회전. [Controller.cpp:802](Controller.cpp#L802) / [:814](Controller.cpp#L814).
 
 ### 화물 적재 시 (`_CARGO`)
 `LifterUp()` 으로 팔레트를 들면 `_hasPayload=true` 가 되고, 이후 모든 회전이 `_CARGO` 변형 상수(더 잘게 쪼갠 가감속 + 낮춘 PWM + 보충한 delay)로 전환되어 팔레트 슬라이드/관성 흔들림을 줄입니다. `LifterDown()` 이 다시 일반 거동으로 되돌립니다.
 
 ### 직진 / 라인트레이싱
-`MOTOR_POWER`(기본 110) 기준으로 **PD 제어**(`Kp`, `Kd`)가 좌/우 PWM 을 조정. [`drive()`](Controller.cpp#L692) 안에서 EEPROM 모터 캘리브와 `SPEED_SCALE` 이 곱해집니다. 교차로 직전엔 **사전 감속**, 교차로 통과 순간엔 **통과 감속**이 별도로 적용됩니다(§4.4).
+`MOTOR_POWER`(기본 110) 기준으로 **PD 제어**(`Kp`, `Kd`)가 좌/우 PWM 을 조정. [`drive()`](Controller.cpp#L713) 안에서 EEPROM 모터 캘리브와 `SPEED_SCALE` 이 곱해집니다. 교차로 직전엔 **사전 감속**, 교차로 통과 순간엔 **통과 감속**이 별도로 적용됩니다(§4.4).
 
 ---
 
@@ -42,7 +42,7 @@
 
 | 값 | 위치 | 기본값 | 설명 |
 |---|---|---|---|
-| **`SPEED_SCALE`** | [Settings_robot1.h:20](Settings_robot1.h#L20) | `1.1f` | 전역 PWM/delay 스케일. PWM×, delay÷ |
+| **`SPEED_SCALE`** | [Settings_robot1.h:20](Settings_robot1.h#L20) | `1.0f` | 전역 PWM/delay 스케일. PWM×, delay÷ |
 | **`MOTOR_POWER`** | [Settings_robot1.h:80](Settings_robot1.h#L80) | 110 | 일반 라인트레이스 base PWM |
 | **`MOTOR_POWER_CARGO`** | [Settings_robot1.h:82](Settings_robot1.h#L82) | 90 | 화물 적재 시 base PWM |
 | **`CROSSING_PASS_POWER`** | [Settings_robot1.h:86](Settings_robot1.h#L86) | 70 | 교차로 통과 순간 감속 PWM (overshoot 방지) |
@@ -145,7 +145,7 @@
 
 > ⚠ `TURN_RAMP_STEPS`/`STEP_MS`/`START_PWM` 을 바꾸면 가감속 구간이 회전을 보태는 양이 달라져 회전각이 변합니다. 그 세 값을 손대면 위 `*_DELAY_MS` 로 90°/180° 를 다시 맞추세요. (실제로 가감속 도입 후 TurnHalf 가 더 돌아서 `TURNHALF_DELAY_MS` 를 450→330 으로 낮춘 상태.)
 
-참고로 회전 본체는 손댈 일이 없지만, 동작 이해용 함수는 [`RampTurn`](Controller.cpp#L733) / [`TurnHalf`](Controller.cpp#L772) / [`PivotTurnLeft`](Controller.cpp#L781) / [`PivotTurnRight`](Controller.cpp#L793).
+참고로 회전 본체는 손댈 일이 없지만, 동작 이해용 함수는 [`RampTurn`](Controller.cpp#L754) / [`TurnHalf`](Controller.cpp#L793) / [`PivotTurnLeft`](Controller.cpp#L802) / [`PivotTurnRight`](Controller.cpp#L814).
 
 ### 4.2 디버그 — 회전각 측정
 
@@ -165,7 +165,7 @@
 #define SERVO_SETTLE_MS  120        // 도달 후 detach 전 안착 대기
 ```
 
-리프터는 [`LifterMove`](Controller.cpp#L502)가 목표각까지 `SERVO_STEP_DEG` 씩 단계적으로 슬루해 부드럽게 올라갑니다. 이동 총시간 ≈ (각도차 / `SERVO_STEP_DEG`) × `SERVO_STEP_MS`.
+리프터는 [`LifterMove`](Controller.cpp#L523)가 목표각까지 `SERVO_STEP_DEG` 씩 단계적으로 슬루해 부드럽게 올라갑니다. 이동 총시간 ≈ (각도차 / `SERVO_STEP_DEG`) × `SERVO_STEP_MS`.
 
 ### 4.4 직진 — PD 제어 + 감속 + 검출/장애물 임계값
 
@@ -200,14 +200,14 @@ PD 제어 ([Settings_robot1.h:107](Settings_robot1.h#L107)):
 #define OBSTACLE_THRESHOLD_SIDE  700        // 좌·우 IR. 측면 오감지 줄이려면 ↓
 ```
 
-동작: 라인 검출은 [`onLine()`](Controller.cpp#L345)이 흑/백 캘리브 기반 **정규화 값**(흰0~검1000)으로 판정 → 로봇·바닥 독립. 캘리브가 무효(격차 < `LINEDETECT_CALIB_MIN_SPAN`)면 raw 폴백. 장애물은 [`CheckObstacle()`](Controller.cpp#L357)이 **중앙+좌+우 3센서**를 1회 디바운스 재확인 후 판정. PD 제어 본체는 [`LineTrace()`](Controller.cpp#L604).
+동작: 라인 검출은 [`onLine()`](Controller.cpp#L358)이 흑/백 캘리브 기반 **정규화 값**(흰0~검1000)으로 판정 → 로봇·바닥 독립. 캘리브가 무효(격차 < `LINEDETECT_CALIB_MIN_SPAN`)면 raw 폴백. 장애물은 [`CheckObstacle()`](Controller.cpp#L370)이 **중앙+좌+우 3센서**를 1회 디바운스 재확인 후 판정. PD 제어 본체는 [`LineTrace()`](Controller.cpp#L625).
 
 ### 4.5 SPEED_SCALE — 전역 속도
 
 [Settings_robot1.h:20](Settings_robot1.h#L20):
 
 ```cpp
-#define SPEED_SCALE 1.1f   // 1.0=원속도. PWM×SCALE, delay÷SCALE. 권장 0.5~1.1
+#define SPEED_SCALE 1.0f   // 1.0=원속도. PWM×SCALE, delay÷SCALE. 권장 0.5~1.0
                            // 0.5 미만은 정지마찰로 모터 안 돎. 바꾸면 §7 주의
 ```
 
@@ -217,7 +217,7 @@ PD 제어 ([Settings_robot1.h:107](Settings_robot1.h#L107)):
 
 1. **EEPROM 모터·센서 캘리브** 먼저
    - 워크스페이스의 별도 스케치(`Calibration.ino`, `MotorCalibration.ino`)로 흑/백 raw 값과 모터 calib 을 EEPROM 240번지 이후에 저장.
-   - 본 스케치는 시작 시 [`readData()`](Controller.cpp#L826)로 읽어 사용 — 비어 있으면 직진/정규화가 망가짐(§6).
+   - 본 스케치는 시작 시 [`readData()`](Controller.cpp#L847)로 읽어 사용 — 비어 있으면 직진/정규화가 망가짐(§6).
 2. **`SPEED_SCALE` 결정** (§4.5)
    - 모터가 안정적으로 돌면서 너무 빠르지 않은 값. 한 번 정하면 고정 (바꾸면 회전 delay 재튜닝).
 3. **직진성 점검** (§4.4)
@@ -235,7 +235,7 @@ PD 제어 ([Settings_robot1.h:107](Settings_robot1.h#L107)):
 
 ## 6. EEPROM 캘리브레이션 상세
 
-[`readData()`](Controller.cpp#L826)가 EEPROM 240번지부터 6개 값을 읽어옵니다:
+[`readData()`](Controller.cpp#L847)가 EEPROM 240번지부터 6개 값을 읽어옵니다:
 
 | Offset | Type | 필드 | 의미 |
 |---|---|---|---|
@@ -247,7 +247,7 @@ PD 제어 ([Settings_robot1.h:107](Settings_robot1.h#L107)):
 | +12 | float | `_motorCalibL` | 왼쪽 PWM 배수 |
 
 - **모터 calib 값**: 보통 **0.95 ~ 1.05** 범위. 1.0 = 그대로. 한쪽이 빠르면 그쪽 값을 낮춤.
-- **센서 흑/백 값**: [`normalizeLeft/Right()`](Controller.cpp#L321)가 0~1000 정규화에 사용. **흰 raw < 검은 raw** 여야 정상. 뒤집혀 있으면 정규화가 한쪽으로 항상 클램프되어 PD 제어가 한쪽으로만 꺾이는 증상이 납니다.
+- **센서 흑/백 값**: [`normalizeLeft/Right()`](Controller.cpp#L334)가 0~1000 정규화에 사용. **흰 raw < 검은 raw** 여야 정상. 뒤집혀 있으면 정규화가 한쪽으로 항상 클램프되어 PD 제어가 한쪽으로만 꺾이는 증상이 납니다.
 - 안전장치: 흑-백 격차가 `LINEDETECT_CALIB_MIN_SPAN`(100)보다 작으면 캘리브 무효로 보고 raw 폴백(`LINEDETECT_RAW_FALLBACK`)으로 검출 — EEPROM 초기화 보드에서 정규화가 항상 1000 되는 오작동 방지.
 - 본 스케치 플래시는 캘리브 영역(240~255)을 지우지 않습니다. 단 **스톡 펌웨어 플래시는 지울 수 있으니** 캘리브 후엔 이 스케치만 올리도록 주의.
 
@@ -265,12 +265,12 @@ PD 제어 ([Settings_robot1.h:107](Settings_robot1.h#L107)):
 
 ## 7. `SPEED_SCALE` 주의사항
 
-[Settings_robot1.h:20](Settings_robot1.h#L20) `SPEED_SCALE = 1.1f`. 거의 모든 곳에 적용됩니다:
+[Settings_robot1.h:20](Settings_robot1.h#L20) `SPEED_SCALE = 1.0f`. 거의 모든 곳에 적용됩니다:
 
-- 모든 PWM 출력 × `SPEED_SCALE` ([`drive()`](Controller.cpp#L692)에서 일괄).
+- 모든 PWM 출력 × `SPEED_SCALE` ([`drive()`](Controller.cpp#L713)에서 일괄).
 - 거의 모든 delay ÷ `SPEED_SCALE` (시간 늘려 같은 각도/거리 유지) — RampTurn 의 step/hold, 정렬 dance, 교차로 통과 전진 모두.
 
-**거리 보존 원리**: PWM 이 SCALE 만큼 줄면 같은 거리를 가는 데 시간이 1/SCALE 배 필요하므로 delay 를 ÷SCALE 합니다. 정렬 dance 의 후진(240ms)·정렬 크리프(120ms), 교차로 통과 전진(100ms) 모두 `SPEED_SCALE=1.0` 기준값이며 코드에서 `/SPEED_SCALE` 처리됩니다 ([LineTracer](Controller.cpp#L562)).
+**거리 보존 원리**: PWM 이 SCALE 만큼 줄면 같은 거리를 가는 데 시간이 1/SCALE 배 필요하므로 delay 를 ÷SCALE 합니다. 정렬 dance 의 후진(240ms)·정렬 크리프(120ms), 교차로 통과 전진(100ms) 모두 `SPEED_SCALE=1.0` 기준값이며 코드에서 `/SPEED_SCALE` 처리됩니다 ([LineTracer](Controller.cpp#L583)).
 
 **`SPEED_SCALE` 을 바꾸면 회전 각도가 미세하게 변합니다** — 정지마찰·관성이 PWM 에 비선형이라 시간 보정만으로 정확히 같은 각도가 안 나옵니다. 가급적 한 번 정하고 그 위에서 다른 값들을 잡으세요.
 
@@ -290,16 +290,22 @@ PD 제어 ([Settings_robot1.h:107](Settings_robot1.h#L107)):
 
 **상시 출력(코드에 박힌 것):**
 
-- 부팅 시 캘리브 값: `rW=... lW=... rB=... lB=...`
-- **NavLog 자동 dump** — 직전 트립의 Eval/DeadEnd/DynBlock 흐름을 EEPROM 에서 읽어 출력 후 클리어 ([init](Controller.cpp#L278)). 엔트리 수는 `NAVLOG_ENTRIES`([Settings_robot1.h:266](Settings_robot1.h#L266)).
-- 네비게이션: `Nav: (x1,y1) -> (x2,y2)`, 매 교차로 `Eval (x,y) hd=.. conn0=.. afterBlk=.. fwd=.. pathLen=..`
-- 데드엔드/우회: `Dead-end at (x,y) — turn + step backtracking`, `Dyn-blocked cell (x,y) count=N`, `Nav STUCK: ...`
+- 부팅 시 캘리브 값 + 로봇 식별: `rW=... lW=... rB=... lB=...`, `ROBOT_ID=N GRID=CxR WH=(x,y)`
+- **NavLog 자동 dump** — 직전 트립의 Eval/DynBlock 흐름을 EEPROM 에서 읽어 출력 후 클리어 ([init](Controller.cpp#L212)). 엔트리 수는 `NAVLOG_ENTRIES`([Settings_robot1.h:262](Settings_robot1.h#L262)).
+- 네비게이션(**BFS 최단경로**): `Nav: (x1,y1) -> (x2,y2)`, 재계획마다 NavLog `Eval (x,y) hd=.. pathLen=N` (BFS 라 conn0/afterBlk/fwd 필드는 미사용=0).
+- 우회/실패: `Dyn-blocked cell (x,y) count=N` (장애물 칸 동적 차단 등록), `Nav STUCK: no path (BFS)` / `guard exceeded` / `obstacle at start-pad exit`.
 - 교차로 카운트: `LINE!!! :N`
 - 회전 진입/이탈: `Enter Pivot turn Left` / `Leave Pivot turn Right` 등
 - 장애물: `sensor front C/L/R : c / l / r` (CheckObstacle 매회), `Obstacle! Backing to prev node.`, `Obstacle! Reversing...`
 - 미등록 도시: `Unknown city UID: [..]`, 우회 실패: `Forward nav failed — returning to warehouse with cargo.`
 
-> 부저는 디버그 외에도 출발 멜로디([`PlayMelody`](Controller.cpp#L848) "도-파-라")와 교차로 통과 순간 "도"(C6) 가 울립니다.
+**시리얼 입력 명령:**
+
+- `m` 또는 `p` → 현재 그리드 상태맵 출력([`PrintStatusMap`](Controller.cpp#L285)): `@`=현재위치 `#`=창고 `!`=동적장애물(IR) `x`=정적장애물 `C`=도시 `:`=격리경계 밖 `.`=빈 교차로. 주행 중엔 navigateTo 가 블로킹하므로 **창고에서 다음 RFID 대기(유휴) 중에만** 처리됨.
+
+> **네비게이션 = BFS 최단경로**: 매 교차로에서 현재→목표 최단경로를 다시 계산하고([`computeBfsPath`](Controller.cpp#L898)), 장애물(`DoLineTrace==false`)을 만나면 그 칸을 동적 차단에 넣고 즉시 재계획해 우회합니다. 구 greedy+DFS 백트래킹(`Dead-end ... backtracking` 로그)은 제거됐습니다. 격리 경계 `NAV_MIN_X`(로봇2=4)는 BFS 후보에서 서쪽 변을 빼는 방식으로 반영됩니다.
+
+> 부저는 디버그 외에도 출발 멜로디([`PlayMelody`](Controller.cpp#L869) "도-파-라"), 교차로 통과 순간 "도"(C6), **도시 출발 직전 "도-도" 2회**(C6 ×2) 가 울립니다.
 
 ---
 
@@ -309,7 +315,7 @@ PD 제어 ([Settings_robot1.h:107](Settings_robot1.h#L107)):
 2. **바퀴·모터 마운트가 흔들리지 않는가?** 슬립 발생 시 회전각 들쭉날쭉.
 3. **바닥 마찰이 일정한가?** 매끈한 바닥과 카펫에서 회전각 다름. 캘리브 환경과 운영 환경 일치.
 4. **화물 적재(`_CARGO`)와 비적재 값을 각각 맞췄는가?** 한쪽만 맞추면 다른 쪽이 어긋남 (§4.1).
-5. **정밀 정렬은 y=0(창고)/y=7(도시)에서만 작동**합니다 ([LineTracer](Controller.cpp#L562) `_preciseRealign`). 중간 행에서는 미세 어긋남 누적 가능.
+5. **정밀 정렬은 y=0(창고)/y=7(도시)에서만 작동**합니다 ([LineTracer](Controller.cpp#L583) `_preciseRealign`). 중간 행에서는 미세 어긋남 누적 가능.
 6. **`TURN_RAMP_*` 를 만진 뒤 `*_DELAY_MS` 재보정했는가?** 가감속이 회전각을 보탭니다 (§4.1).
 7. **`_motorCalibL/R` 이 NaN / 0 이 아닌가?** 시작 시 Serial `rW lW rB lB` 첫 줄로 확인 (§6).
 8. **실주행 전 `DEBUG_TRACE=0`, `DEBUG_TURN_PAUSE_MS=0` 확인** — 켜진 채면 주행이 느려지거나 멈춤 (§8).
