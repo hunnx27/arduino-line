@@ -49,24 +49,26 @@ eInitialPosition ──(Start tag)──► eWareHousePosition ──(City tag, 
 
 **Robot 2**: 8-column × 8-row grid (`col 0~7`, `GRID_COLS=8`). Robot 2 starts at `(-1, INIT_START_Y)` heading east, transits map 1 (cols 0–3) to reach its warehouse in cols 4–7, then is confined to cols ≥ 4 via `NAV_MIN_X=4` (activated after the initial transit). Cities along `row 7`, cols 4–7 (대구/광주/춘천/제주).
 
-Both robots: every cell connected to its 4 cardinal neighbors. Bot tracks `currentPose = {x, y, heading}` and at each crossing decides the next direction by:
+Both robots: every cell is connected to its 4 cardinal neighbors (full grid). The bot tracks `currentPose = {x, y, heading}` and navigates with **BFS shortest-path, re-planned at every crossing**:
 
-1. Compute `(dx, dy)` to target.
-2. Look up the current crossing's `conn` bitmask via `lookupConn(x, y)` — programmatic, returns N|E|S|W minus any grid-boundary directions (controlled by `GRID_COLS`, `GRID_ROWS`).
-3. **Y-first greedy + perpendicular fallback**: prefer N/S when `dy != 0` and that direction is in `conn`; otherwise E/W if `dx != 0`. If the direct direction is masked (e.g., obstacle blocked it) **and the target lies straight along that axis (dx=0 or dy=0)**, fall back to whichever perpendicular direction (E/W or N/S) is available so the bot can detour and return to the target column/row later.
-4. `rotateToHeading()` issues a `PivotTurn*`/`TurnHalf` if needed, then `DoLineTrace(1)` advances one crossing.
+1. `navigateTo(tx, ty)` loops until the pose reaches the target. The off-grid start pad (`x < 0`) is handled first: rotate `HD_EAST` and step one cell onto the grid.
+2. `computeBfsPath(tx, ty)` runs a breadth-first search from `currentPose` over `lookupConn()` connectivity — minus statically/dynamically blocked neighbors (`maskBlockedNeighbors`), the west isolation boundary (`NAV_MIN_X`), and the last temporary one-direction mask — filling `_pathX/_pathY` with the shortest route (start cell excluded, target included). Returns `false` if no path exists.
+3. The bot drives that path one cell at a time: `rotateToHeading()` issues a `PivotTurn*`/`TurnHalf` as needed, then `DoLineTrace(1)` advances one crossing.
+4. If `DoLineTrace(1)` returns `false` (obstacle), the bot registers the would-be cell via `addDynBlockedCell()`, records a temporary directional mask, `break`s out of the path loop, and re-runs BFS from the current cell — immediately taking the new shortest detour. A loop guard (`GRID_COLS*GRID_ROWS*4 + 8` replans) backstops infinite loops.
 
-Adding a new city: just add a `CityCoord` mapping RFID UID → `(x, y)` in `CITY_COORDS[]`. **No path code or map edit needed** — the navigator finds the route. If a future layout has a gap in the grid (some cell missing a particular direction), add an override inside `lookupConn()`. If the navigator hits a true dead-end (every direction blocked), it prints `"Nav STUCK at (x,y)"`, returns `false`, and the dispatch handles the failure (see next paragraph).
+(This replaced the old greedy + DFS-backtracking navigator, which could wander when the cell just before the target was blocked on a single-file approach. `desiredHeading()`/`maskCellsOnPath()`/visit-counter logic and the `NAVLOG_TAG_DEADEND` tag were removed.)
 
-`navigateTo()` returns `bool` — `true` on reaching target, `false` on STUCK. The `eWareHousePosition` dispatch checks the return: on success, runs the drop-cargo + return-trip sequence normally; on failure, **skips `LifterDown`/`TurnHalf`** and just navigates back to `(1, 0)` with cargo still on the lifter. This avoids the previous bug where a failed forward trip silently triggered the "arrived at city" choreography in the middle of the map.
+Adding a new city: just add a `CityCoord` mapping RFID UID → `(x, y)` in `CITY_COORDS[]` (in `Settings_robot*.h`). **No path code or map edit needed** — BFS finds the route. If a future layout has a gap in the grid (some cell missing a direction), add an override inside `lookupConn()`.
 
-**Obstacle bypass** (single unified mode): when `CheckObstacle()` trips during `DoLineTrace(1)`, the bot does `ReverseToPreviousNode()` and returns `false`. The navigator records the blocked `(x, y, direction)` and re-runs `desiredHeading()` with that direction masked out of `conn`, so the next iteration picks an alternative (perpendicular fallback if the target is on the same axis). Block clears on any successful move. Init sequence uses the same navigator (`navigateTo(WAREHOUSE_X, WAREHOUSE_Y)` from the start RFID position), so obstacles encountered during the bring-up trip are handled the same way.
+`navigateTo()` returns `bool` — `true` on reaching the target, `false` on STUCK (prints `"Nav STUCK: no path (BFS)."`, `"... guard exceeded."`, or `"... obstacle at start-pad exit."`). The `eWareHousePosition` dispatch checks the return: on success, runs the drop-cargo + return-trip sequence normally; on failure, **keeps cargo on the lifter** (skips the city `LifterDown` choreography and the final warehouse `LifterUp`) and still navigates back to `(WAREHOUSE_X, WAREHOUSE_Y)`. This avoids the old bug where a failed forward trip triggered the "arrived at city" choreography mid-map.
 
-**Layout requirement**: the blocked crossing must have at least one other valid direction toward the target, otherwise the navigator prints `"Nav STUCK"` and stops.
+**Map isolation** (`NAV_MIN_X`): robot 1 leaves it at `-128` (inert). Robot 2 sets it to `4` immediately after the initial transit (`eInitialPosition`), and `computeBfsPath` drops the west (`CONN_W`) edge whenever `x - 1 < _navMinX`, structurally confining robot 2 to cols ≥ 4 for all later round-trips. (Robot 1 is confined by `GRID_COLS = 4`.)
 
-**Precise realign** (the reverse-then-forward dance in `LineTracer()`) only runs when arriving at `y == 0` (warehouse row) or `y == 7` (city row) — the rows where a clean turn matters. Intermediate crossings just count and pass through with a brief stop. Controlled by `_preciseRealign` member, set per call by the `precise` parameter of `DoLineTrace()`.
+**Serial status map**: typing `m`/`p` into the serial monitor calls `PrintStatusMap()` — an ASCII grid (`@`=pose, `#`=warehouse, `!`=dynamic block, `x`=static block, `C`=city, `:`=isolation off-limits). Only processed while idle at the warehouse, since `navigateTo` blocks the loop while driving. The last trip's BFS evaluations (`Eval`) and dynamic blocks (`DynBlock`) are also logged to EEPROM (NavLog, addresses `[0, NAVLOG_ENTRIES*8+1]`) and auto-dumped on boot.
 
-Initial pose is set in the `eInitialPosition` case after the start-tag sequence: `currentPose = {1, 0, HD_NORTH}`. If the physical heading after init differs, the first `navigateTo()` will issue a `TurnHalf` to correct.
+**Precise realign** (the reverse-then-forward dance in `LineTracer()`) only runs when arriving at `y == 0` (warehouse row) or `y == 7` (city row) — the rows where a clean turn matters. Intermediate crossings just count and pass through with a brief stop. Controlled by the `_preciseRealign` member, set per call by the `precise` parameter of `DoLineTrace()`.
+
+Initial pose is set in the `eInitialPosition` case from the start-tag: `currentPose = {INIT_START_X, INIT_START_Y, INIT_START_HEADING}` (robot 1: `(-1, 3, HD_EAST)`). `navigateTo(WAREHOUSE_X, WAREHOUSE_Y)` then drives onto the grid and to the warehouse, and `_navMinX` is set to `NAV_MIN_X` immediately after.
 
 The `eTargetPosition` enum value is unused; `currentPosition` only ever holds `eInitialPosition` or `eWareHousePosition`.
 
@@ -76,18 +78,17 @@ The `eTargetPosition` enum value is unused; `currentPosition` only ever holds `e
 
 - `LineTrace()` runs a **PD-controller** (`PID_KP`, `PID_KD`, `PID_MAX_CORRECTION`) over normalized bottom-sensor readings. Base speed uses `MOTOR_POWER` (normal) or `MOTOR_POWER_CARGO` (payload) from `Settings_robot*.h`. Pre-crossing approach deceleration and pass deceleration are also configurable there.
 - A "crossing" = both bottom sensors simultaneously read above `LINEDETECT_NORM_MIN` (normalized 0–1000 scale, default 700). `bSignalHigh` debounces so one physical crossing increments `nLineCounter` exactly once.
-- On reaching `targetCount`, `LineTracer()` does a deliberate **reverse-then-forward re-alignment**: back up ~400 ms to fully clear the line, then creep forward at reduced power until both sensors hit the line again. Tweak the `delay(400)` in `LineTracer` if the bot under- or over-shoots realignment.
+- On reaching `targetCount` **at `y == 0`/`y == 7`** (precise realign), `LineTracer()` does a deliberate **reverse-then-forward re-alignment**: back up ~240 ms (scaled by `1/SPEED_SCALE`) to fully clear the line, then creep forward at reduced power until both sensors hit the line again. Tweak the `240 / SPEED_SCALE` delay in `LineTracer` if the bot under- or over-shoots. Intermediate crossings skip the dance (brief stop only).
 
-### Obstacle bypass
+### Obstacle handling
 
-When `CheckObstacle()` (front-center IR < `OBSTACLE_THRESHOLD`, with one debounce re-read) trips mid-`DoLineTrace`:
+When `CheckObstacle()` (front-center / front-left / front-right IR each below `OBSTACLE_THRESHOLD` / `OBSTACLE_THRESHOLD_SIDE`, with one debounce re-read) trips mid-`DoLineTrace(1)`:
 
-1. `enableObstacleAvoidance` is temporarily cleared to prevent re-entrancy.
-2. `nLineCounter` is saved, then `ReverseToPreviousNode()` backs up until both bottom sensors find a line.
-3. A hardcoded detour fires: `PivotTurnLeft → DoLineTrace(1) → PivotTurnRight → DoLineTrace(2) → PivotTurnRight → DoLineTrace(1) → PivotTurnLeft`.
-4. `targetCount` is decremented by 1, `nLineCounter` is restored, and the outer `DoLineTrace` resumes.
+1. The bot `Stop()`s, then `ReverseToPreviousNode()` backs up until both bottom sensors re-find a line, creeps forward to realign, and stops.
+2. `DoLineTrace(1)` returns `false`.
+3. `navigateTo` registers the would-be cell via `addDynBlockedCell()` (persisted for the rest of the power cycle so future trips pre-avoid it), records a temporary one-direction mask for the immediate replan, and re-runs BFS from the current cell → new shortest detour.
 
-Because `DoLineTrace` recurses into itself during the bypass, **don't add state that assumes a single live invocation** without first guarding against the bypass re-entry.
+There is **no hardcoded detour choreography** anymore — the old `PivotTurnLeft → DoLineTrace → ...` sequence was removed with the BFS rewrite, and `DoLineTrace` no longer recurses. Avoidance emerges entirely from re-planning, so the dynamic-block list (`g_dynBlocked`, capped at `MAX_DYN_BLOCKED`) is the only obstacle state to reason about.
 
 ### Calibration via EEPROM
 
