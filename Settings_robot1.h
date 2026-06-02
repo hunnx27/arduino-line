@@ -76,11 +76,11 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 //     · PID_KP / PID_KD / PID_MAX_CORRECTION — 속도가 바뀌면 조향이 흔들리니 재튜닝.
 //     · REALIGN_BACKUP_MS / REALIGN_CREEP_MS — 정렬 dance 거리(= 이 PWM × 시간)가 변함.
 //     · 정렬 크리프는 (MOTOR_POWER-40) 으로 구동 → 너무 낮추면 stall.
-#define MOTOR_POWER           110
+#define MOTOR_POWER           120
 // 화물(팔레트) 적재 시 base PWM — 무거우니 약간 낮춤
 //   ↔ 함께 확인: CROSSING_PASS_POWER (이 값보다 작아야 함, 역전 금지).
 //     ↑ 올리면 팔레트 슬라이드/관성 흔들림 위험. (정렬 dance 는 MOTOR_POWER 사용 → 이 값과 무관)
-#define MOTOR_POWER_CARGO      90
+#define MOTOR_POWER_CARGO      110
 
 // 교차로 통과 시 (양 센서 검출 상태) 감속 PWM — overshoot 방지.
 // 50 미만 비추 (정지마찰로 멈출 위험).
@@ -109,8 +109,8 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 // -------------------- PD 제어 (라인 트레이서) --------------------
 // 진동 시: Kd ↓ 또는 Kp ↓. 곡선 lag 시: Kp ↑.
 // 일반적으로 Kd 는 Kp 의 5~30 배 사이에서 시작.
-#define PID_KP               0.04f
-#define PID_KD               0.3f
+#define PID_KP               0.05f
+#define PID_KD               0.45f
 // 조향 보정량 saturation. leftPWM = base+correction, rightPWM = base-correction
 // 이므로 좌우 바퀴 PWM 차이는 최대 2×이 값. 라인에서 아무리 벗어나도(또는 D항이
 // 순간 튀어도) 이 폭 이상은 안 꺾는다 → 주 역할은 D항 스파이크 억제.
