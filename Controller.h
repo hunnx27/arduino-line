@@ -104,13 +104,11 @@ private:
     float _motorCalibL;
 
     // === 튜닝 값 기본치는 Settings.h 매크로에서 가져옴 ===
-    int Power                          = MOTOR_POWER;
-    int CrossingPassPower              = CROSSING_PASS_POWER;
-    int CrossingApproachPower          = CROSSING_APPROACH_POWER;
-    unsigned long CrossingApproachMs       = CROSSING_APPROACH_MS;
-    unsigned long CrossingApproachMsCargo  = CROSSING_APPROACH_MS_CARGO;
-    // 직전 교차로 검출 시각 — LineTrace 안에서 갱신. 사전 감속 타이머 기준.
-    unsigned long _lastCrossingTime = 0;
+    int Power                          = MOTOR_POWER;        // 정속(cruise) 상한 PWM
+    int CrossingPassPower              = CROSSING_PASS_POWER; // 노드 직전 감속 목표(brake) PWM
+    // 직진 모션 프로파일 상태 — base PWM 을 목표로 가감속률 제한 슬루(사다리꼴/삼각형).
+    float _drivePwm = 0;                 // 현재 슬루 중인 base PWM (런 시작 시 DRIVE_START_PWM)
+    unsigned long _lastDriveMs = 0;      // 슬루 dt 계산용 직전 갱신 시각
     unsigned long lastRFIDTime = 0;
 
     // PD 제어 상수 (기본값 Settings.h 에서)

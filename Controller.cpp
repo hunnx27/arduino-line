@@ -421,8 +421,9 @@ void Controller::ReverseToPreviousNode() {
 bool Controller::DoLineTrace(uint16_t targetCount, bool precise)
 {
     _preciseRealign = precise;  // LineTracer 가 도달 시점에 읽음
-    _runTargetCount = targetCount;  // LineTrace 가 마지막 교차로 접근(=감속 구간) 판정에 사용
-    _lastCrossingTime = millis();   // 사전 감속 타이머 시작 — 직전 교차로 시점 기준
+    _runTargetCount = targetCount;  // LineTrace 가 마지막 칸(=감속 구간) 판정에 사용
+    _drivePwm    = DRIVE_START_PWM; // 런 시작 PWM 부터 가속 램프
+    _lastDriveMs = millis();        // 슬루 dt 기준 시작
 
     // 출발 라인 위에서 시작하면 그 라인은 카운트하지 않도록 래치 프라이밍.
     // (cold-start 시 봇을 시작 RFID/교차로 위에 올려놓아도 첫 교차로를 오인하지 않음.
@@ -663,7 +664,6 @@ void Controller::LineTrace() {
 #endif
             _bSignalHigh = 1;
             _prevError = 0;             // 교차로 진입 — D 항 spike 방지
-            _lastCrossingTime = millis(); // 사전 감속 타이머 리셋 — 다음 교차로 기준
         }
         tone(pinBuzzer, 1047);   // 도
         Forward(CrossingPassPower);   // 교차로 통과 시 감속 — overshoot 방지
@@ -688,30 +688,34 @@ void Controller::LineTrace() {
         if (correction > maxCorrection) correction = maxCorrection;
         if (correction < -maxCorrection) correction = -maxCorrection;
 
-        // 사전 감속: 직전 교차로 후 일정 시간 지나면 base PWM 을 낮춤.
-        // 화물 적재(eWareHousePosition) 는 느리므로 임계값/감속 PWM 따로 (Settings.h).
-        bool cargo = _hasPayload;
-        unsigned long approachThreshold = cargo ? CrossingApproachMsCargo : CrossingApproachMs;
-        // 사전 감속은 "이번 런의 마지막 교차로(= 정지/회전 지점)로 접근 중"일 때만 켠다.
-        // 중간 통과 교차로(직진 계속)에서는 감속하지 않아 직진 런을 풀속으로 통과 →
-        // 연속 직진 주행과 충돌하지 않음. (런은 같은 heading 연속이라 마지막 칸 = 회전/도착 직전)
-        bool finalLeg   = (nLineCounter + 1 >= _runTargetCount);
-        bool inApproach = finalLeg && ((millis() - _lastCrossingTime) > approachThreshold);
+        // 직진 모션 프로파일 — base PWM 을 목표로 가감속률 제한 슬루(사다리꼴/삼각형).
+        //   cruise = 정속 상한(긴 직선에서 도달) / brake = 노드 직전 감속 목표.
+        //   감속 시작 = 런 끝 DRIVE_BRAKE_CELLS 칸 전 교차점 통과 시점(=마지막 노드 직전).
+        //   런은 같은 heading 연속이라 마지막 칸 = 회전/도착 직전. 중간 칸은 cruise 로 통과.
+        //   runLen ≤ BRAKE_CELLS 면 출발부터 brake 목표 → 낮은 피크 삼각형(영상 1칸 패턴).
+        bool cargo  = _hasPayload;
+        int  cruise = cargo ? MOTOR_POWER_CARGO : Power;
+        int  brake  = CrossingPassPower;
+        bool braking = (nLineCounter + DRIVE_BRAKE_CELLS >= _runTargetCount);
+        int  target  = braking ? brake : cruise;
+
+        unsigned long now = millis();
+        unsigned long dt  = now - _lastDriveMs;
+        if (dt > 50) dt = 50;          // 루프 지연/첫 진입 시 과도 점프 방지
+        _lastDriveMs = now;
+
+        // 슬로프(PWM/ms). 감속 시간을 짧게 두면 급제동(영상 −64 : +30 ≈ ½).
+        float accelStep = (float)(cruise - DRIVE_START_PWM) / (float)DRIVE_ACCEL_MS * dt;
+        float decelStep = (float)(cruise - brake)           / (float)DRIVE_DECEL_MS * dt;
+        if (_drivePwm < target)      { _drivePwm += accelStep; if (_drivePwm > target) _drivePwm = target; }
+        else if (_drivePwm > target) { _drivePwm -= decelStep; if (_drivePwm < target) _drivePwm = target; }
+
 #if DEBUG_APPROACH_TONE
-        // 사전 감속 시작(전속→감속 전환) 순간에 한 번만 부저음. tone 의 duration 인자로
-        // 비블로킹 재생(자동 정지) → 제어 루프 안 막음. 교차로마다 _lastCrossingTime 이
-        // 리셋되며 inApproach 가 false 로 돌아가 자동 재무장.
-        if (inApproach && !_inApproachPrev) {
-            tone(pinBuzzer, DEBUG_APPROACH_TONE_HZ, 60);
-        }
-        _inApproachPrev = inApproach;
+        // 감속 전환(가속/정속 → 감속) 순간 1회 부저음 — 비블로킹.
+        if (braking && !_inApproachPrev) tone(pinBuzzer, DEBUG_APPROACH_TONE_HZ, 60);
+        _inApproachPrev = braking;
 #endif
-        int basePower;
-        if (inApproach) {
-            basePower = cargo ? CROSSING_APPROACH_POWER_CARGO : CrossingApproachPower;
-        } else {
-            basePower = cargo ? MOTOR_POWER_CARGO : Power;
-        }
+        int basePower = (int)_drivePwm;
 
         float leftPower = basePower + correction;
         float rightPower = basePower - correction;
