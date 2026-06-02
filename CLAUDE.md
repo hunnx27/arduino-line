@@ -78,7 +78,7 @@ The `eTargetPosition` enum value is unused; `currentPosition` only ever holds `e
 
 - `LineTrace()` runs a **PD-controller** (`PID_KP`, `PID_KD`, `PID_MAX_CORRECTION`) over normalized bottom-sensor readings. Base speed uses `MOTOR_POWER` (normal) or `MOTOR_POWER_CARGO` (payload) from `Settings_robot*.h`. Pre-crossing approach deceleration and pass deceleration are also configurable there.
 - A "crossing" = both bottom sensors simultaneously read above `LINEDETECT_NORM_MIN` (normalized 0–1000 scale, default 700). `bSignalHigh` debounces so one physical crossing increments `nLineCounter` exactly once.
-- On reaching `targetCount` **at `y == 0`/`y == 7`** (precise realign), `LineTracer()` does a deliberate **reverse-then-forward re-alignment**: back up ~240 ms (scaled by `1/SPEED_SCALE`) to fully clear the line, then creep forward at reduced power until both sensors hit the line again. Tweak the `240 / SPEED_SCALE` delay in `LineTracer` if the bot under- or over-shoots. Intermediate crossings skip the dance (brief stop only).
+- On reaching `targetCount` **at `y == 0`/`y == 7`** (precise realign), `LineTracer()` does a deliberate **reverse-then-forward re-alignment**: back up `REALIGN_BACKUP_MS` (~240 ms) to fully clear the line, then creep forward at reduced power until both sensors hit the line again (`REALIGN_CREEP_MS`). Tweak `REALIGN_BACKUP_MS` in `Settings_robot*.h` if the bot under- or over-shoots. Intermediate crossings skip the dance (brief stop only). The whole dance can be disabled with `PRECISE_REALIGN_ENABLE 0` (falls back to a brief stop). (These constants, plus `CROSSING_PASS_MS` for the crossing-pass forward nudge, were extracted from hardcoded values when the always-`1.0` `SPEED_SCALE` global was removed.)
 
 ### Obstacle handling
 
