@@ -664,11 +664,14 @@ void Controller::LineTrace() {
 #endif
             _bSignalHigh = 1;
             _prevError = 0;             // 교차로 진입 — D 항 spike 방지
+            tone(pinBuzzer, 1047, 60);  // 교차로마다 1회 비블로킹 부저("도")
         }
-        tone(pinBuzzer, 1047);   // 도
-        Forward(CrossingPassPower);   // 교차로 통과 시 감속 — overshoot 방지
+        // 마지막 교차로만 감속(brake)으로 통과 → 이후 LineTracer 가 정지/정렬.
+        // 중간 교차로는 정속(_drivePwm) 유지로 통과 → 매 칸 감속(톱니) 제거.
+        // delay 는 공통: 선을 확실히 넘기는 "블라인드 윈도"(이 동안 미샘플) →
+        //   한 교차로를 센서 깜빡으로 두 번 세는 것(→ 한 칸 짧게 정지) 방지.
+        Forward((nLineCounter >= _runTargetCount) ? CrossingPassPower : (int)_drivePwm);
         delay(CROSSING_PASS_MS); // 🌟 선을 완전히 넘어가도록 약간의 전진.
-        noTone(pinBuzzer);
     }
     else {
         if (_bSignalHigh) {
