@@ -371,10 +371,15 @@ bool Controller::CheckObstacle() {
     int center = analogRead(SensorFrontCenter);
     int left   = analogRead(SensorFrontLeft);
     int right  = analogRead(SensorFrontRight);
+    // ⚠ 이 출력은 DoLineTrace 폴링 루프에서 매 PD 틱마다 실행된다.
+    // 9600baud 블로킹으로 제어 루프를 ~28Hz 로 throttle → 고속에서 커브 이탈/교차점 누락.
+    // 실주행(DEBUG_TRACE=0)에서는 컴파일에서 제외해 루프를 최대 속도로 돌린다.
+#if DEBUG_TRACE
     Serial.print("sensor front C/L/R : ");
     Serial.print(center); Serial.print(" / ");
     Serial.print(left);   Serial.print(" / ");
     Serial.println(right);
+#endif
 
     bool centerTrip = (center < OBSTACLE_THRESHOLD);
     bool leftTrip   = (left   < OBSTACLE_THRESHOLD_SIDE);
@@ -646,9 +651,12 @@ void Controller::LineTrace() {
     if (onLine(leftRaw, rightRaw)) {
         if (_bSignalHigh == 0) {
             nLineCounter++;
+#if DEBUG_TRACE
+            // 교차로마다 1회. String 힙 할당 + 시리얼이라 실주행에선 컴파일 제외.
             if (Serial) {
                 Serial.println(String("LINE!!! :") + String(nLineCounter));
             }
+#endif
             _bSignalHigh = 1;
             _prevError = 0;             // 교차로 진입 — D 항 spike 방지
             _lastCrossingTime = millis(); // 사전 감속 타이머 리셋 — 다음 교차로 기준
