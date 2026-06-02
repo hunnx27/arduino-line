@@ -412,7 +412,7 @@ void Controller::ReverseToPreviousNode() {
     while (true) {
         if (onLine(GetLeft(), GetRight())) break;
     }
-    delay((unsigned long)(120 / SPEED_SCALE));  // 라인 올라탄 뒤 정렬 크리프(거리 보존). LineTracer 정렬과 동일 형식.
+    delay(REALIGN_CREEP_MS);  // 라인 올라탄 뒤 정렬 크리프. LineTracer 정렬과 동일 형식.
 
     Stop();
     delay(200); // 차체 안정화
@@ -594,17 +594,18 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
 
     // 목표한 교차로 개수에 도달했을 때
     if (nTargetLineCounter == nLineCounter) {
-        if (_preciseRealign) {
-            // 정확한 turn 이 필요한 위치 (y=0 창고 / y=7 도시) — 후진/전진 dance
+        if (_preciseRealign && PRECISE_REALIGN_ENABLE) {
+            // 정확한 turn 이 필요한 위치 (y=0 창고 / y=7 도시) — 후진/전진 dance.
+            // PRECISE_REALIGN_ENABLE=0 이면 이 dance 를 건너뛰고 아래 else(잠깐 정지)로 처리.
             if (Serial) Serial.println("LineCount Finished. Precise realign...");
 
             Stop();
             delay(150);
 
-            // 거리 보존: PWM 은 drive() 에서 ×SPEED_SCALE 되므로, 같은 후진 거리를 유지하려면
-            // 시간을 /SPEED_SCALE. 240ms 는 SPEED_SCALE=1.0 기준 튜닝값(= 옛 400×0.6).
+            // 후진으로 선을 완전히 클리어 — 거리 = Power(=MOTOR_POWER) × REALIGN_BACKUP_MS.
+            // (240ms 는 옛 400×0.6 튜닝값. MOTOR_POWER 를 바꾸면 이 거리도 변하니 재튜닝.)
             drive(BACKWARD, Power, BACKWARD, Power);
-            delay((unsigned long)(240 / SPEED_SCALE));
+            delay(REALIGN_BACKUP_MS);
 
             Stop();
             delay(100); // 기어 방향 전환 전 잠깐 대기
@@ -613,12 +614,12 @@ bool Controller::LineTracer(uint16_t nTargetLineCounter)
             while (true) {
                 if (onLine(GetLeft(), GetRight())) break;
             }
-            delay((unsigned long)(120 / SPEED_SCALE));  // 라인 올라탄 뒤 정렬 크리프(거리 보존). 120ms = SPEED_SCALE=1.0 기준.
+            delay(REALIGN_CREEP_MS);  // 라인 올라탄 뒤 정렬 크리프.
 
             Stop();
             delay(200); // 차체 안정화
         } else {
-            // 중간 교차로 통과 — 정밀 정렬 불필요, 그냥 잠시 정지만
+            // 중간 교차로 통과(또는 PRECISE_REALIGN_ENABLE=0) — 정밀 정렬 없이 잠시 정지만
             Stop();
             delay(50);
         }
@@ -666,7 +667,7 @@ void Controller::LineTrace() {
         }
         tone(pinBuzzer, 1047);   // 도
         Forward(CrossingPassPower);   // 교차로 통과 시 감속 — overshoot 방지
-        delay((unsigned long)(100 / SPEED_SCALE)); // 🌟 선을 완전히 넘어가도록 약간의 전진(거리 보존). 100ms = SPEED_SCALE=1.0 기준.
+        delay(CROSSING_PASS_MS); // 🌟 선을 완전히 넘어가도록 약간의 전진.
         noTone(pinBuzzer);
     }
     else {
@@ -740,12 +741,11 @@ void  Controller::drive(int dir1, int power1, int dir2, int power2)
         dirHighLow2 = HIGH;
 
     // 💡 EEPROM에 저장된 각 모터의 편차(CalibL, CalibR)를 여기서 자동 적용함
-    // SPEED_SCALE은 모든 drive() 경유 호출에 일괄 적용 (전역 속도 조절)
     digitalWrite(LeftWheelDir, dirHighLow1);
-    analogWrite(LeftWheelPWM, power1 * _motorCalibL * SPEED_SCALE);
+    analogWrite(LeftWheelPWM, power1 * _motorCalibL);
 
     digitalWrite(RightWheelDir, dirHighLow2);
-    analogWrite(RightWheelPWM, power2 * _motorCalibR * SPEED_SCALE);
+    analogWrite(RightWheelPWM, power2 * _motorCalibR);
 }
 
 void  Controller::Forward(int power)
@@ -773,11 +773,8 @@ void Controller::RampTurn(int dirL, int dirR, int cruiseL, int cruiseR, unsigned
     int  stepMs = cargo ? TURN_RAMP_STEP_MS_CARGO : TURN_RAMP_STEP_MS;
     int  startP = cargo ? TURN_START_PWM_CARGO    : TURN_START_PWM;
 
-    // SPEED_SCALE 보정: drive() PWM 은 ×SPEED_SCALE 이므로, 회전각(= PWM×시간)을 유지하려면
-    // 시간(step·hold)을 /SPEED_SCALE 해야 한다 → 느려져도 같은 90°/180° 를 돈다.
-    // (TURN_SETTLE_MS 는 진동 감쇠 대기라 속도와 무관 → 스케일 안 함.)
-    unsigned long stepDelay = (unsigned long)(stepMs / SPEED_SCALE);
-    unsigned long holdDelay = (unsigned long)(holdMs / SPEED_SCALE);
+    unsigned long stepDelay = (unsigned long)stepMs;
+    unsigned long holdDelay = (unsigned long)holdMs;
 
     // [1] 가속: startP 에서 cruise 까지 선형 증가.
     for (int i = 1; i <= steps; i++) {

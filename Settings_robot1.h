@@ -14,12 +14,6 @@
 // =====================================================================
 
 
-// -------------------- 전체 속도 스케일 --------------------
-// 1.0 = 원래 속도. PWM 은 이 비율만큼 줄고, 각도/거리 유지 delay 는 1/SPEED_SCALE 배.
-// 권장 0.5 ~ 1.0. 0.5 미만은 정지마찰로 모터 안 돌 수 있음.
-#define SPEED_SCALE 1.0f
-
-
 // -------------------- 그리드 크기 --------------------
 // 격자 col(x) / row(y) 수. 변경 시 CITY_COORDS, BLOCKED_CELLS 좌표 검토 필요.
 #define GRID_COLS 4
@@ -77,15 +71,24 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 
 // -------------------- 모터 PWM (직진 / 감속) --------------------
 // 일반 주행 base PWM (직진 P/D 제어용)
+//   ↔ 함께 확인 (이 값을 바꾸면):
+//     · CROSSING_APPROACH_POWER / CROSSING_PASS_POWER — 이 값보다 "작아야" 감속이 됨(역전 금지).
+//     · PID_KP / PID_KD / PID_MAX_CORRECTION — 속도가 바뀌면 조향이 흔들리니 재튜닝.
+//     · REALIGN_BACKUP_MS / REALIGN_CREEP_MS — 정렬 dance 거리(= 이 PWM × 시간)가 변함.
+//     · 정렬 크리프는 (MOTOR_POWER-40) 으로 구동 → 너무 낮추면 stall.
 #define MOTOR_POWER           110
 // 화물(팔레트) 적재 시 base PWM — 무거우니 약간 낮춤
+//   ↔ 함께 확인: CROSSING_APPROACH_POWER_CARGO / CROSSING_PASS_POWER (이 값보다 작아야 함, 역전 금지).
+//     ↑ 올리면 팔레트 슬라이드/관성 흔들림 위험. (정렬 dance 는 MOTOR_POWER 사용 → 이 값과 무관)
 #define MOTOR_POWER_CARGO      90
 
 // 교차로 통과 시 (양 센서 검출 상태) 감속 PWM — overshoot 방지.
 // 50 미만 비추 (정지마찰로 멈출 위험).
+//   ↔ 함께 확인: MOTOR_POWER / MOTOR_POWER_CARGO 보다 작게 유지. 통과 거리는 CROSSING_PASS_MS.
 #define CROSSING_PASS_POWER    70
 
 // 교차로 도착 전 사전 감속 PWM — 직전 교차로 이후 일정 시간 지나면 base 를 이 값으로 낮춤.
+//   ↔ 함께 확인: MOTOR_POWER(_CARGO) 보다 작고 CROSSING_PASS_POWER 보다 크게 (평속 > 사전감속 > 통과).
 #define CROSSING_APPROACH_POWER         90
 #define CROSSING_APPROACH_POWER_CARGO   80
 
@@ -142,6 +145,27 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 // 측면용은 따로 (벽/측면 라인 오감지 줄이려면 더 낮게 설정 가능).
 #define OBSTACLE_THRESHOLD       700
 #define OBSTACLE_THRESHOLD_SIDE  700
+
+
+// -------------------- 정렬/통과 타이밍 (구 SPEED_SCALE 보정 대상) --------------------
+// 예전엔 코드에 박혀 SPEED_SCALE 로 나눠 쓰던 시간값들. SPEED_SCALE 제거하며 여기로 분리.
+// 모두 "이동 거리 = 구동 PWM × 시간" 이라, 짝이 되는 PWM 을 바꾸면 함께 재튜닝해야 함.
+//
+// PRECISE_REALIGN_ENABLE : y=0/y=7 도착 시 후진→전진 정렬 dance 사용 여부.
+//   1 = 켬 (정확한 회전 위해 선에 다시 맞춤. 시간 더 걸림).
+//   0 = 끔 (dance 생략, 잠깐 정지만 하고 통과 — 빠르지만 정렬 정확도 ↓).
+//   ※ 아래 REALIGN_*_MS 는 이 값이 1 일 때만 의미 있음.
+#define PRECISE_REALIGN_ENABLE   1
+//
+// REALIGN_BACKUP_MS : y=0/y=7 도착 후 정렬 dance 의 후진 시간(ms). 구동 PWM = MOTOR_POWER.
+//   ↑ 더 많이 후진(선 확실히 클리어) / ↓ 덜 후진.  ↔ MOTOR_POWER 바꾸면 후진 거리 변함.
+#define REALIGN_BACKUP_MS    240
+// REALIGN_CREEP_MS : 후진 후 라인을 재검출하며 다시 붙는 전진 크리프 시간(ms). 구동 PWM = MOTOR_POWER-40.
+//   교차로 회피 정렬(ReverseToPreviousNode) 과 도착 정렬(LineTracer) 둘 다 사용.
+#define REALIGN_CREEP_MS     120
+// CROSSING_PASS_MS : 교차로(양 센서 검출) 통과 시 선을 확실히 넘기는 전진 시간(ms). 구동 PWM = CROSSING_PASS_POWER.
+//   ↔ CROSSING_PASS_POWER 바꾸면 통과 거리 변함.
+#define CROSSING_PASS_MS     100
 
 
 // -------------------- 리프터 서보 --------------------
