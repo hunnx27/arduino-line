@@ -89,6 +89,12 @@ private:
 
     uint16_t nLineCounter = 0;
     uint16_t targetLineCount = 0;
+    // 직전 DoLineTrace 가 실제 통과한 교차로 수. 런(연속 직진) 단위 주행에서
+    // 장애물로 중단됐을 때 navigateTo 가 pose 를 정확히 되돌리는 데 쓴다.
+    uint16_t _crossingsDone = 0;
+    // 현재 DoLineTrace 런의 목표 교차로 수. LineTrace 가 "마지막 교차로(=정지/회전
+    // 지점)로 접근 중"인지 판정해 사전 감속을 그때만 켜는 데 쓴다.
+    uint16_t _runTargetCount = 1;
 
     int16_t _rightWhite;
     int16_t _leftWhite;

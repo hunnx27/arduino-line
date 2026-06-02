@@ -421,6 +421,7 @@ void Controller::ReverseToPreviousNode() {
 bool Controller::DoLineTrace(uint16_t targetCount, bool precise)
 {
     _preciseRealign = precise;  // LineTracer 가 도달 시점에 읽음
+    _runTargetCount = targetCount;  // LineTrace 가 마지막 교차로 접근(=감속 구간) 판정에 사용
     _lastCrossingTime = millis();   // 사전 감속 타이머 시작 — 직전 교차로 시점 기준
 
     // 출발 라인 위에서 시작하면 그 라인은 카운트하지 않도록 래치 프라이밍.
@@ -432,11 +433,13 @@ bool Controller::DoLineTrace(uint16_t targetCount, bool precise)
             Stop();
             delay(500);
             if (Serial) Serial.println("Obstacle! Backing to prev node.");
+            _crossingsDone = nLineCounter;  // 장애물 전까지 통과한 교차로 수 (ReverseToPreviousNode 가 이 칸으로 복귀)
             ReverseToPreviousNode();
             ResetLineCounter();
             return false;  // 네비게이터가 막힌 방향 기록 후 재계산
         }
     }
+    _crossingsDone = targetCount;  // 전부 통과
     return true;
 }
 
@@ -688,7 +691,11 @@ void Controller::LineTrace() {
         // 화물 적재(eWareHousePosition) 는 느리므로 임계값/감속 PWM 따로 (Settings.h).
         bool cargo = _hasPayload;
         unsigned long approachThreshold = cargo ? CrossingApproachMsCargo : CrossingApproachMs;
-        bool inApproach = (millis() - _lastCrossingTime) > approachThreshold;
+        // 사전 감속은 "이번 런의 마지막 교차로(= 정지/회전 지점)로 접근 중"일 때만 켠다.
+        // 중간 통과 교차로(직진 계속)에서는 감속하지 않아 직진 런을 풀속으로 통과 →
+        // 연속 직진 주행과 충돌하지 않음. (런은 같은 heading 연속이라 마지막 칸 = 회전/도착 직전)
+        bool finalLeg   = (nLineCounter + 1 >= _runTargetCount);
+        bool inApproach = finalLeg && ((millis() - _lastCrossingTime) > approachThreshold);
 #if DEBUG_APPROACH_TONE
         // 사전 감속 시작(전속→감속 전환) 순간에 한 번만 부저음. tone 의 duration 인자로
         // 비블로킹 재생(자동 정지) → 제어 루프 안 막음. 교차로마다 _lastCrossingTime 이
@@ -1011,30 +1018,57 @@ bool Controller::navigateTo(int8_t tx, int8_t ty) {
                    (uint8_t)currentPose.x, (uint8_t)currentPose.y,
                    (uint8_t)currentPose.heading, 0, 0, 0, _pathLen);
 
-        // 계획 경로대로 한 칸씩 주행. 각 칸은 직전 칸과 인접 → dx/dy 는 항상 한 축 ±1.
-        for (uint8_t i = 0; i < _pathLen; i++) {
-            int8_t nx = _pathX[i], ny = _pathY[i];
-            int8_t dx = nx - currentPose.x, dy = ny - currentPose.y;
-            Heading d = (dy == -1) ? HD_NORTH : (dy == 1) ? HD_SOUTH :
-                        (dx == 1)  ? HD_EAST  : HD_WEST;
-            rotateToHeading(d);
+        // 계획 경로 주행 — 같은 heading 으로 이어지는 연속 직선 구간을 한 번에 통과한다
+        // (직진 중 노드마다 멈추지 않음). 회전 노드 / 정밀정렬 지점(최종 목표 또는
+        // 수직 이동으로 y0·y7 도착)에서만 그 런의 마지막 칸이 멈추고 정렬한다.
+        uint8_t i = 0;
+        while (i < _pathLen) {
+            // 이번 런의 heading: 현재 위치 → i 번째 칸 방향. (인접 셀이라 한 축 ±1)
+            int8_t dx0 = _pathX[i] - currentPose.x, dy0 = _pathY[i] - currentPose.y;
+            Heading runHd = (dy0 == -1) ? HD_NORTH : (dy0 == 1) ? HD_SOUTH :
+                            (dx0 == 1)  ? HD_EAST  : HD_WEST;
 
-            // 정밀 정렬: 최종 목표 도착, 또는 수직 이동으로 row 0(창고행)/row 7(도시행) 도착 시.
-            bool arriveTarget = (nx == tx && ny == ty);
-            bool vertArrival  = (dy != 0) && (ny == 0 || ny == 7);
+            // 같은 heading 으로 이어지는 칸을 [i, j) 한 런으로 묶는다 (방향 바뀌면 끊김).
+            uint8_t j = i + 1;
+            while (j < _pathLen) {
+                int8_t ddx = _pathX[j] - _pathX[j - 1], ddy = _pathY[j] - _pathY[j - 1];
+                Heading hd = (ddy == -1) ? HD_NORTH : (ddy == 1) ? HD_SOUTH :
+                             (ddx == 1)  ? HD_EAST  : HD_WEST;
+                if (hd != runHd) break;
+                j++;
+            }
+            uint8_t runLen = j - i;
+            uint8_t last   = j - 1;
+
+            // 런의 마지막 칸에서만 정밀 정렬 (최종 목표, 또는 수직 이동으로 y0/y7 도착).
+            // y0/y7 은 격자 경계라 수직 런은 항상 그 칸에서 끝남 → 통과 중 누락 없음.
+            bool arriveTarget = (_pathX[last] == tx && _pathY[last] == ty);
+            bool vertArrival  = (runHd == HD_NORTH || runHd == HD_SOUTH) &&
+                                (_pathY[last] == 0 || _pathY[last] == 7);
             bool precise = arriveTarget || vertArrival;
 
-            if (DoLineTrace(1, precise)) {
-                currentPose.x = nx;
-                currentPose.y = ny;
+            rotateToHeading(runHd);   // 런 시작에 한 번만 회전 (직진 중엔 회전 없음)
+
+            bool ok = DoLineTrace(runLen, precise);
+            uint8_t done = _crossingsDone;   // 이번 런에서 실제 통과한 칸 수
+
+            // 통과한 만큼 pose 전진 (런은 한 축이라 마지막 통과 칸으로 갱신).
+            if (done > 0) {
+                currentPose.x = _pathX[i + done - 1];
+                currentPose.y = _pathY[i + done - 1];
+            }
+
+            if (ok) {
                 _blockedAtX = -128;
+                i = j;                  // 다음 런으로
             } else {
-                // 장애물 — 그 칸 영구 차단 + 임시 마스킹 기록, break 후 현재 위치에서 재계획.
-                addDynBlockedCell(nx, ny);
+                // 장애물 — 막 진입하려던 칸(i+done) 차단 등록, break 후 현재 위치에서 BFS 재계획.
+                int8_t bx = _pathX[i + done], by = _pathY[i + done];
+                addDynBlockedCell(bx, by);
                 _blockedAtX = currentPose.x;
                 _blockedAtY = currentPose.y;
-                _blockedDirBit = (d == HD_NORTH) ? CONN_N : (d == HD_EAST) ? CONN_E :
-                                 (d == HD_SOUTH) ? CONN_S : CONN_W;
+                _blockedDirBit = (runHd == HD_NORTH) ? CONN_N : (runHd == HD_EAST) ? CONN_E :
+                                 (runHd == HD_SOUTH) ? CONN_S : CONN_W;
                 break;
             }
         }
