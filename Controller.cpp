@@ -489,8 +489,29 @@ void Controller::ProcessRFIDRead()
             tone(pinBuzzer, 1047);
             delay(200);
             noTone(pinBuzzer);
-            delay(500); 
-            
+            delay(500);
+
+            // ── 1-a) 중도 경유점 (soft waypoint) ──
+            // VIA_COORDS 를 순서대로 경유 시도. 장애물 위거나 도달 불가면 그 점은 삭제(건너뜀).
+            for (uint8_t v = 0; v < VIA_COORD_COUNT; v++) {
+                int8_t vx = VIA_COORDS[v].x, vy = VIA_COORDS[v].y;
+                bool offGrid = (vx < 0 || vx >= GRID_COLS || vy < 0 || vy >= GRID_ROWS);
+                if (offGrid || isBlockedCell(vx, vy)) {
+                    if (Serial) {
+                        Serial.print(F("Via skip (blocked) (")); Serial.print(vx);
+                        Serial.print(F(",")); Serial.print(vy); Serial.println(F(")"));
+                    }
+                    continue;
+                }
+                if (!navigateTo(vx, vy)) {
+                    if (Serial) {
+                        Serial.print(F("Via skip (unreachable) (")); Serial.print(vx);
+                        Serial.print(F(",")); Serial.print(vy); Serial.println(F(")"));
+                    }
+                    continue;   // 도달 불가 → 그 경유점 삭제, 다음 경유점/도시로 계속
+                }
+            }
+
             bool reached = navigateTo(tx, ty);
 
             if (reached) {

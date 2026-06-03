@@ -69,6 +69,18 @@ static const BlockedCell BLOCKED_CELLS[] = {
 static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(BlockedCell);
 
 
+// -------------------- 중도 경유 좌표 (soft waypoint) --------------------
+// 도시로 가기 전, 순서대로 이 좌표들을 경유 시도한다 (왕복의 가는 길에만 적용).
+// 단, 다음 경우 그 경유점은 "삭제"하고 건너뛴다(다음 경유점/도시로 계속):
+//   - 랜덤 장애물 좌표와 겹침 (정적 BLOCKED_CELLS 또는 런타임 g_dynBlocked)
+//   - BFS 로 도달 불가 (navigateTo 가 false)
+// 비워 두면(VIA_COORD_COUNT==0) 기능 비활성 — 기존처럼 도시로 직행.
+static const BlockedCell VIA_COORDS[] = {
+    // 예: {1, 4}, {2, 5}
+};
+static const uint8_t VIA_COORD_COUNT = sizeof(VIA_COORDS) / sizeof(BlockedCell);
+
+
 // -------------------- 직진 모션 프로파일 (가감속 램프) --------------------
 // LineTrace 가 base PWM 을 매 루프 목표로 가감속률 제한 슬루 → 사다리꼴/삼각형 속도 프로파일.
 // (엔코더 없음: PWM≈속도 근사.) 직진 구동 PWM 한 세트를 여기서 함께 관리한다.
