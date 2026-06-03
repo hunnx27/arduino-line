@@ -74,26 +74,31 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 // (엔코더 없음: PWM≈속도 근사.) 직진 구동 PWM 한 세트를 여기서 함께 관리한다.
 //   프로파일: 0 → DRIVE_START_PWM 킥 → MOTOR_POWER(cruise) 가속·정속
 //             → 마지막 칸 DRIVE_END_PWM 감속 → 마지막 교차로 통과 → Stop/realign(0)
-//   중간 교차로는 정속(cruise) 무정지 통과. 화물(_CARGO)은 cruise 만 따로(무게 보정).
+//   중간 교차로는 정속(cruise) 무정지 통과. 모든 PWM/시간은 [일반]/[화물(_CARGO)] 분리.
+//   (화물 기본값은 일반과 동일 — 동작 변화 없음. 무게 거동 다르면 _CARGO 만 따로 튜닝.)
 //
-// 출발 킥 PWM — 정지마찰 위 (RampTurn 의 TURN_START_PWM 과 동일 개념).
+// 출발 킥 PWM — 정지마찰 위 (RampTurn 의 TURN_START_PWM 과 동일 개념). 화물: 정지마찰 크면 ↑.
 #define DRIVE_START_PWM        90
+#define DRIVE_START_PWM_CARGO  90
 // 정속(cruise) 상한 — 긴 직선에서 도달하는 최고속. [일반] / [화물]
 //   ↑ 더 빠르게 (base±correction < 255 유지. correction 상한은 PID_MAX_CORRECTION).
 //   ※ MOTOR_POWER 는 realign dance 후진/크리프(=MOTOR_POWER-40) 구동에도 쓰임 → 너무 낮추면 stall.
 //     속도 바꾸면 PID_KP/KD/MAX_CORRECTION, REALIGN_*_MS 도 재튜닝.
-#define MOTOR_POWER           110
+#define MOTOR_POWER           140
 //   화물: 무거우니 낮춤. ↑ 올리면 팔레트 슬라이드/관성 흔들림 위험. (realign 은 MOTOR_POWER 사용 → 무관)
-#define MOTOR_POWER_CARGO      90
+#define MOTOR_POWER_CARGO     140
 // 끝(노드 도착) PWM — ① 프로파일 감속 바닥값(braking 시 _drivePwm 이 여기까지 하강)
 //   ② 런의 마지막 교차로 통과 PWM (중간 교차로는 cruise 정속 통과). 구 CROSSING_PASS_POWER.
-//   50 미만 비추(정지마찰). ↔ MOTOR_POWER(_CARGO) 보다 작게 유지. 통과/감속 거리는 CROSSING_PASS_MS.
+//   50 미만 비추(정지마찰). ↔ MOTOR_POWER(_CARGO) 보다 작게 유지. 화물: 관성 크면 ↓(오버슈트 방지).
 #define DRIVE_END_PWM          70
-// START→cruise 가속 시간(ms). 짧을수록 빨리 정속 도달. (≈ TURN_RAMP_STEPS×STEP_MS)
-#define DRIVE_ACCEL_MS        250
-// cruise→END 감속 시간(ms). 가속보다 짧게 = 급제동 (영상 −64:+30 ≈ ½).
+#define DRIVE_END_PWM_CARGO    70
+// START→cruise 가속 시간(ms). 짧을수록 빨리 정속 도달. 화물: 살살 가속하려면 ↑.
+#define DRIVE_ACCEL_MS        1000
+#define DRIVE_ACCEL_MS_CARGO  1000
+// cruise→END 감속 시간(ms). 가속보다 짧게 = 급제동. 화물: 관성 크면 ↑(길게)지만 너무 길면 오버슈트.
 #define DRIVE_DECEL_MS        130
-// 런 끝에서 몇 칸 전부터 감속 시작. 1 = 마지막 노드 직전 교차점부터.
+#define DRIVE_DECEL_MS_CARGO  130
+// 런 끝에서 몇 칸 전부터 감속 시작. 1 = 마지막 노드 직전 교차점부터. (일반/화물 공통)
 // cruise 를 올려 1칸 제동거리 부족(오버슈트/마지막 교차점 놓침)하면 2 로.
 #define DRIVE_BRAKE_CELLS       1
 
@@ -106,8 +111,8 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 // -------------------- PD 제어 (라인 트레이서) --------------------
 // 진동 시: Kd ↓ 또는 Kp ↓. 곡선 lag 시: Kp ↑.
 // 일반적으로 Kd 는 Kp 의 5~30 배 사이에서 시작.
-#define PID_KP               0.04f
-#define PID_KD               0.3f
+#define PID_KP               (0.05f + (+0.8 * 0.05f)) // 10%(0.1)단위로 조절
+#define PID_KD               (0.3f + (-0.2 * 0.3f)) // 10%(0.1)단위로 조절
 // 조향 보정량 saturation. leftPWM = base+correction, rightPWM = base-correction
 // 이므로 좌우 바퀴 PWM 차이는 최대 2×이 값. 라인에서 아무리 벗어나도(또는 D항이
 // 순간 튀어도) 이 폭 이상은 안 꺾는다 → 주 역할은 D항 스파이크 억제.
@@ -115,7 +120,7 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 //                  (Kp 올려도 여기 걸리면 소용없음 — 이 상한부터 풀어야 함)
 //   ↓ 내림(예 20): 직선에서 좌우 지그재그/진동(overshoot) 심할 때.
 // 튜닝 순서: Kp/Kd 를 먼저 맞추고, saturation 이 실제로 걸릴 때만 마지막에 조정.
-#define PID_MAX_CORRECTION   30.0f
+#define PID_MAX_CORRECTION   25.0f
 
 
 // -------------------- 디버그 출력 --------------------
@@ -154,7 +159,7 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 //   1 = 켬 (정확한 회전 위해 선에 다시 맞춤. 시간 더 걸림).
 //   0 = 끔 (dance 생략, 잠깐 정지만 하고 통과 — 빠르지만 정렬 정확도 ↓).
 //   ※ 아래 REALIGN_*_MS 는 이 값이 1 일 때만 의미 있음.
-#define PRECISE_REALIGN_ENABLE   1
+#define PRECISE_REALIGN_ENABLE   0
 //
 // REALIGN_BACKUP_MS : y=0/y=7 도착 후 정렬 dance 의 후진 시간(ms). 구동 PWM = MOTOR_POWER.
 //   ↑ 더 많이 후진(선 확실히 클리어) / ↓ 덜 후진.  ↔ MOTOR_POWER 바꾸면 후진 거리 변함.
@@ -259,7 +264,7 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 //   DELAY = 90° 각도 ("못 돎"→↑ / "넘게 돎"→↓).
 #define PIVOT_LEFT_STRONG_PWM         170   // [일반] 오른쪽(바깥) 바퀴 속도
 #define PIVOT_LEFT_WEAK_PWM           120   // [일반] 왼쪽(안쪽) 바퀴 속도
-#define PIVOT_LEFT_DELAY_MS           145   // [일반] 각도
+#define PIVOT_LEFT_DELAY_MS           130   // [일반] 각도
 #define PIVOT_LEFT_STRONG_PWM_CARGO   120   // [화물] 오른쪽(바깥) 바퀴 속도
 #define PIVOT_LEFT_WEAK_PWM_CARGO      70   // [화물] 왼쪽(안쪽) 바퀴 속도
 #define PIVOT_LEFT_DELAY_MS_CARGO     225   // [화물] 각도
@@ -269,7 +274,7 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 //   구조는 좌회전과 동일. 좌/우는 기구·모터 편차로 값이 살짝 다를 수 있음(한쪽만 미세조정).
 #define PIVOT_RIGHT_STRONG_PWM        170   // [일반] 왼쪽(바깥) 바퀴 속도
 #define PIVOT_RIGHT_WEAK_PWM          120   // [일반] 오른쪽(안쪽) 바퀴 속도
-#define PIVOT_RIGHT_DELAY_MS          155   // [일반] 각도
+#define PIVOT_RIGHT_DELAY_MS          140   // [일반] 각도
 #define PIVOT_RIGHT_STRONG_PWM_CARGO  120   // [화물] 왼쪽(바깥) 바퀴 속도
 #define PIVOT_RIGHT_WEAK_PWM_CARGO     70   // [화물] 오른쪽(안쪽) 바퀴 속도
 #define PIVOT_RIGHT_DELAY_MS_CARGO    230   // [화물] 각도

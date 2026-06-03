@@ -422,7 +422,7 @@ bool Controller::DoLineTrace(uint16_t targetCount, bool precise)
 {
     _preciseRealign = precise;  // LineTracer 가 도달 시점에 읽음
     _runTargetCount = targetCount;  // LineTrace 가 마지막 칸(=감속 구간) 판정에 사용
-    _drivePwm    = DRIVE_START_PWM; // 런 시작 PWM 부터 가속 램프
+    _drivePwm    = _hasPayload ? DRIVE_START_PWM_CARGO : DRIVE_START_PWM; // 런 시작 PWM 부터 가속 램프
     _lastDriveMs = millis();        // 슬루 dt 기준 시작
 
     // 출발 라인 위에서 시작하면 그 라인은 카운트하지 않도록 래치 프라이밍.
@@ -489,7 +489,7 @@ void Controller::ProcessRFIDRead()
             tone(pinBuzzer, 1047);
             delay(200);
             noTone(pinBuzzer);
-            delay(1500); 
+            delay(500); 
             
             bool reached = navigateTo(tx, ty);
 
@@ -697,8 +697,11 @@ void Controller::LineTrace() {
         //   런은 같은 heading 연속이라 마지막 칸 = 회전/도착 직전. 중간 칸은 cruise 로 통과.
         //   runLen ≤ BRAKE_CELLS 면 출발부터 brake 목표 → 낮은 피크 삼각형(영상 1칸 패턴).
         bool cargo  = _hasPayload;
-        int  cruise = cargo ? MOTOR_POWER_CARGO : Power;
-        int  brake  = DriveEndPwm;
+        int  cruise = cargo ? MOTOR_POWER_CARGO    : Power;       // 정속 상한
+        int  start  = cargo ? DRIVE_START_PWM_CARGO : DRIVE_START_PWM;
+        int  brake  = cargo ? DRIVE_END_PWM_CARGO   : DriveEndPwm;  // 감속 바닥 = 마지막 교차로 통과
+        int  accMs  = cargo ? DRIVE_ACCEL_MS_CARGO  : DRIVE_ACCEL_MS;
+        int  decMs  = cargo ? DRIVE_DECEL_MS_CARGO  : DRIVE_DECEL_MS;
         bool braking = (nLineCounter + DRIVE_BRAKE_CELLS >= _runTargetCount);
         int  target  = braking ? brake : cruise;
 
@@ -708,8 +711,8 @@ void Controller::LineTrace() {
         _lastDriveMs = now;
 
         // 슬로프(PWM/ms). 감속 시간을 짧게 두면 급제동(영상 −64 : +30 ≈ ½).
-        float accelStep = (float)(cruise - DRIVE_START_PWM) / (float)DRIVE_ACCEL_MS * dt;
-        float decelStep = (float)(cruise - brake)           / (float)DRIVE_DECEL_MS * dt;
+        float accelStep = (float)(cruise - start) / (float)accMs * dt;
+        float decelStep = (float)(cruise - brake) / (float)decMs * dt;
         if (_drivePwm < target)      { _drivePwm += accelStep; if (_drivePwm > target) _drivePwm = target; }
         else if (_drivePwm > target) { _drivePwm -= decelStep; if (_drivePwm < target) _drivePwm = target; }
 
