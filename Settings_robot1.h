@@ -69,32 +69,29 @@ static const BlockedCell BLOCKED_CELLS[] = {
 static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(BlockedCell);
 
 
-// -------------------- 모터 PWM (직진 / 감속) --------------------
-// 일반 주행 base PWM (직진 P/D 제어용)
-//   ↔ 함께 확인 (이 값을 바꾸면):
-//     · CROSSING_PASS_POWER / DRIVE_START_PWM — 이 값보다 "작아야" 감속/가속이 됨(역전 금지).
-//     · PID_KP / PID_KD / PID_MAX_CORRECTION — 속도가 바뀌면 조향이 흔들리니 재튜닝.
-//     · REALIGN_BACKUP_MS / REALIGN_CREEP_MS — 정렬 dance 거리(= 이 PWM × 시간)가 변함.
-//     · 정렬 크리프는 (MOTOR_POWER-40) 으로 구동 → 너무 낮추면 stall.
-#define MOTOR_POWER           120
-// 화물(팔레트) 적재 시 base PWM — 무거우니 약간 낮춤
-//   ↔ 함께 확인: CROSSING_PASS_POWER (이 값보다 작아야 함, 역전 금지).
-//     ↑ 올리면 팔레트 슬라이드/관성 흔들림 위험. (정렬 dance 는 MOTOR_POWER 사용 → 이 값과 무관)
-#define MOTOR_POWER_CARGO      110
-
-// 교차로 통과 시 (양 센서 검출 상태) 감속 PWM — overshoot 방지.
-// 50 미만 비추 (정지마찰로 멈출 위험).
-//   ↔ 함께 확인: MOTOR_POWER / MOTOR_POWER_CARGO 보다 작게 유지. 통과 거리는 CROSSING_PASS_MS.
-#define CROSSING_PASS_POWER    70
-
 // -------------------- 직진 모션 프로파일 (가감속 램프) --------------------
-// LineTrace 가 매 루프 base PWM 을 목표로 가감속률 제한 슬루 → 사다리꼴/삼각형 속도 프로파일.
-// cruise = MOTOR_POWER, 노드 직전 감속 목표 = CROSSING_PASS_POWER. (엔코더 없이 PWM≈속도 근사)
-// 런 시작 PWM — 정지마찰 위 (RampTurn 의 TURN_START_PWM 과 동일 개념).
+// LineTrace 가 base PWM 을 매 루프 목표로 가감속률 제한 슬루 → 사다리꼴/삼각형 속도 프로파일.
+// (엔코더 없음: PWM≈속도 근사.) 직진 구동 PWM 한 세트를 여기서 함께 관리한다.
+//   프로파일: 0 → DRIVE_START_PWM 킥 → MOTOR_POWER(cruise) 가속·정속
+//             → 마지막 칸 DRIVE_END_PWM 감속 → 마지막 교차로 통과 → Stop/realign(0)
+//   중간 교차로는 정속(cruise) 무정지 통과. 화물(_CARGO)은 cruise 만 따로(무게 보정).
+//
+// 출발 킥 PWM — 정지마찰 위 (RampTurn 의 TURN_START_PWM 과 동일 개념).
 #define DRIVE_START_PWM        90
+// 정속(cruise) 상한 — 긴 직선에서 도달하는 최고속. [일반] / [화물]
+//   ↑ 더 빠르게 (base±correction < 255 유지. correction 상한은 PID_MAX_CORRECTION).
+//   ※ MOTOR_POWER 는 realign dance 후진/크리프(=MOTOR_POWER-40) 구동에도 쓰임 → 너무 낮추면 stall.
+//     속도 바꾸면 PID_KP/KD/MAX_CORRECTION, REALIGN_*_MS 도 재튜닝.
+#define MOTOR_POWER           120
+//   화물: 무거우니 낮춤. ↑ 올리면 팔레트 슬라이드/관성 흔들림 위험. (realign 은 MOTOR_POWER 사용 → 무관)
+#define MOTOR_POWER_CARGO     110
+// 끝(노드 도착) PWM — ① 프로파일 감속 바닥값(braking 시 _drivePwm 이 여기까지 하강)
+//   ② 런의 마지막 교차로 통과 PWM (중간 교차로는 cruise 정속 통과). 구 CROSSING_PASS_POWER.
+//   50 미만 비추(정지마찰). ↔ MOTOR_POWER(_CARGO) 보다 작게 유지. 통과/감속 거리는 CROSSING_PASS_MS.
+#define DRIVE_END_PWM          70
 // START→cruise 가속 시간(ms). 짧을수록 빨리 정속 도달. (≈ TURN_RAMP_STEPS×STEP_MS)
 #define DRIVE_ACCEL_MS        250
-// cruise→brake 감속 시간(ms). 가속보다 짧게 = 급제동 (영상 −64:+30 ≈ ½).
+// cruise→END 감속 시간(ms). 가속보다 짧게 = 급제동 (영상 −64:+30 ≈ ½).
 #define DRIVE_DECEL_MS        130
 // 런 끝에서 몇 칸 전부터 감속 시작. 1 = 마지막 노드 직전 교차점부터.
 // cruise 를 올려 1칸 제동거리 부족(오버슈트/마지막 교차점 놓침)하면 2 로.
@@ -157,7 +154,7 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 //   1 = 켬 (정확한 회전 위해 선에 다시 맞춤. 시간 더 걸림).
 //   0 = 끔 (dance 생략, 잠깐 정지만 하고 통과 — 빠르지만 정렬 정확도 ↓).
 //   ※ 아래 REALIGN_*_MS 는 이 값이 1 일 때만 의미 있음.
-#define PRECISE_REALIGN_ENABLE   1
+#define PRECISE_REALIGN_ENABLE   0
 //
 // REALIGN_BACKUP_MS : y=0/y=7 도착 후 정렬 dance 의 후진 시간(ms). 구동 PWM = MOTOR_POWER.
 //   ↑ 더 많이 후진(선 확실히 클리어) / ↓ 덜 후진.  ↔ MOTOR_POWER 바꾸면 후진 거리 변함.
@@ -165,8 +162,10 @@ static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(Blocked
 // REALIGN_CREEP_MS : 후진 후 라인을 재검출하며 다시 붙는 전진 크리프 시간(ms). 구동 PWM = MOTOR_POWER-40.
 //   교차로 회피 정렬(ReverseToPreviousNode) 과 도착 정렬(LineTracer) 둘 다 사용.
 #define REALIGN_CREEP_MS     120
-// CROSSING_PASS_MS : 교차로(양 센서 검출) 통과 시 선을 확실히 넘기는 전진 시간(ms). 구동 PWM = CROSSING_PASS_POWER.
-//   ↔ CROSSING_PASS_POWER 바꾸면 통과 거리 변함.
+// CROSSING_PASS_MS : 교차로 통과 시 선을 확실히 넘기는 전진 시간(ms) = "블라인드 윈도"
+//   (이 동안 센서 미샘플 → 한 교차로를 깜빡으로 두 번 세는 것 방지). 모든 교차로 공통.
+//   구동 PWM = 마지막 교차로는 DRIVE_END_PWM, 중간 교차로는 _drivePwm(정속).
+//   ↔ cruise 가 높으면 이 시간이 길 때 블라인드 중 다음 선을 지나칠 수 있으니 ↓.
 #define CROSSING_PASS_MS     100
 
 

@@ -104,8 +104,8 @@ private:
     float _motorCalibL;
 
     // === 튜닝 값 기본치는 Settings.h 매크로에서 가져옴 ===
-    int Power                          = MOTOR_POWER;        // 정속(cruise) 상한 PWM
-    int CrossingPassPower              = CROSSING_PASS_POWER; // 노드 직전 감속 목표(brake) PWM
+    int Power                          = MOTOR_POWER;     // 정속(cruise) 상한 PWM
+    int DriveEndPwm                    = DRIVE_END_PWM;   // 끝(노드 도착) PWM = 감속 바닥 + 마지막 교차로 통과
     // 직진 모션 프로파일 상태 — base PWM 을 목표로 가감속률 제한 슬루(사다리꼴/삼각형).
     float _drivePwm = 0;                 // 현재 슬루 중인 base PWM (런 시작 시 DRIVE_START_PWM)
     unsigned long _lastDriveMs = 0;      // 슬루 dt 계산용 직전 갱신 시각
