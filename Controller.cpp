@@ -197,16 +197,13 @@ static uint8_t maskBlockedNeighbors(int8_t x, int8_t y, uint8_t conn) {
 static uint8_t g_bfsParent[GRID_COLS * GRID_ROWS];
 static uint8_t g_bfsQueue[GRID_COLS * GRID_ROWS];
 
-static bool lookupCityCoord(const String& uid, int8_t* outX, int8_t* outY) {
+// UID 로 도시 항목을 찾아 그 포인터를 반환 (좌표 + 도시별 경유점 포함). 없으면 nullptr.
+static const CityCoord* lookupCity(const String& uid) {
     for (uint8_t i = 0; i < CITY_COORD_COUNT; i++) {
         if (CITY_COORDS[i].uid[0] == '\0') continue;  // 미등록 UID skip
-        if (uid.compareTo(CITY_COORDS[i].uid) == 0) {
-            *outX = CITY_COORDS[i].x;
-            *outY = CITY_COORDS[i].y;
-            return true;
-        }
+        if (uid.compareTo(CITY_COORDS[i].uid) == 0) return &CITY_COORDS[i];
     }
-    return false;
+    return nullptr;
 }
 
 void Controller::init() {
@@ -470,9 +467,9 @@ void Controller::ProcessRFIDRead()
         }
 
         case eWareHousePosition: {
-            // 좌표 기반 디스패치 — UID 로 목적지 좌표 찾고 navigateTo 로 왕복.
-            int8_t tx, ty;
-            if (!lookupCityCoord(strRFID, &tx, &ty)) {
+            // 좌표 기반 디스패치 — UID 로 도시(목적지 좌표 + 도시별 경유점) 찾고 navigateTo 로 왕복.
+            const CityCoord* city = lookupCity(strRFID);
+            if (!city) {
                 if (Serial) {
                     Serial.print(F("Unknown city UID: ["));
                     Serial.print(strRFID); Serial.println(F("]"));
@@ -480,6 +477,7 @@ void Controller::ProcessRFIDRead()
                 mfrc522.PCD_AntennaOn();
                 break;
             }
+            int8_t tx = city->x, ty = city->y;
 
             // ── 1) 도시 가기 ──
             tone(pinBuzzer, 1047);
@@ -491,8 +489,8 @@ void Controller::ProcessRFIDRead()
             noTone(pinBuzzer);
             delay(500);
 
-            // ── 1-a) 중도 경유점 (soft waypoint, 가는 길) ──
-            traverseVias(VIA_COORDS, VIA_COORD_COUNT);
+            // ── 1-a) 중도 경유점 (soft waypoint, 가는 길) — 이 도시 전용 ──
+            traverseVias(city->via, city->viaCount);
 
             bool reached = navigateTo(tx, ty);
 
@@ -511,8 +509,8 @@ void Controller::ProcessRFIDRead()
             }
 
             // ── 3) 물류창고로 복귀 (성공/실패 무관) ──
-            // 복귀 경유점 (soft waypoint, 오는 길). 가는 길과 별개 리스트.
-            traverseVias(VIA_COORDS_RETURN, VIA_COORD_RETURN_COUNT);
+            // 복귀 경유점 (soft waypoint, 오는 길) — 이 도시 전용. 가는 길과 별개.
+            traverseVias(city->viaRet, city->viaRetCount);
             navigateTo(WAREHOUSE_X, WAREHOUSE_Y);
 
             // 창고 도착 — 항상 도시 방향(N) 으로 정렬 (다음 RFID 태깅 대기 자세)

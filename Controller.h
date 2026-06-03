@@ -54,16 +54,27 @@ struct Crossing {
     uint8_t conn;       // 이 교차로에서 갈 수 있는 방향 비트마스크
 };
 
-struct CityCoord {
-    const char* uid;
-    int8_t x;
-    int8_t y;
-};
-
 struct BlockedCell {
     int8_t x;
     int8_t y;
 };
+
+// 도시 = RFID UID → 좌표 + 도시별 중도 경유점(가는 길/오는 길).
+// via/viaRet 은 BlockedCell 배열 포인터, *Count 는 그 길이. 없으면 NOVIA.
+struct CityCoord {
+    const char* uid;
+    int8_t x;
+    int8_t y;
+    const BlockedCell* via;      // 창고→도시 경유점
+    uint8_t viaCount;
+    const BlockedCell* viaRet;   // 도시→창고 경유점
+    uint8_t viaRetCount;
+};
+
+// CITY_COORDS 초기화 편의 매크로 — 배열명만 주면 (포인터, 길이) 자동 전개.
+//   {uid, x, y, VIALIST(VIA_X), VIALIST(VIA_X_RET)}  또는 경유 없으면 NOVIA.
+#define VIALIST(arr) (arr), (uint8_t)(sizeof(arr) / sizeof(BlockedCell))
+#define NOVIA        nullptr, 0
 
 // 튜닝 가능 상수는 Settings.h 한 곳에 모음.
 // (BLOCKED_CELLS / CITY_COORDS / INIT_START_HEADING 가 위의 타입을 참조하므로

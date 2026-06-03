@@ -46,14 +46,26 @@
 #define NAV_MIN_X -128
 
 
-// -------------------- 도시 위치 (RFID UID → 좌표 매핑) --------------------
+// -------------------- 도시별 중도 경유 좌표 (soft waypoint) --------------------
+// 도시마다 가는 길/오는 길 경유점이 다를 수 있어 도시별로 정의한다.
+// 규칙: 경유점이 장애물 좌표(BLOCKED_CELLS·g_dynBlocked) 위거나 BFS 도달 불가면
+//       그 경유점은 삭제(건너뜀)하고 다음 경유점/목적지로 계속한다.
+// 경유 없는 도시는 CITY_COORDS 에서 NOVIA 로, 있으면 VIALIST(배열명) 으로 연결.
+// (CITY_COORDS 보다 위에 정의돼야 참조 가능.)
+static const BlockedCell VIA_INCHEON[]     = { /* 예: {1, 4} */ };
+static const BlockedCell VIA_INCHEON_RET[] = { /* 예: {1, 4} */ };
+static const BlockedCell VIA_SEJONG[]      = { /* 예: {2, 4} */ };
+static const BlockedCell VIA_SEJONG_RET[]  = { /* 예: {2, 4} */ };
+
+// -------------------- 도시 위치 (RFID UID → 좌표 + 경유점) --------------------
 // 도시는 모두 row 7. UID 빈 문자열인 항목은 미등록 (실 태그 부착 후 채우기).
-// 새 도시 추가 시 lookupCityCoord() 가 자동 매핑.
+// 새 도시 추가 시 lookupCity() 가 자동 매핑.
+//   {uid, x, y, <가는길 경유>, <오는길 경유>}  — 경유는 VIALIST(arr) 또는 NOVIA.
 static const CityCoord CITY_COORDS[] = {
-    {"",         0, 7},  // Seoul   (col 0)
-    {"647AB573",         1, 7},  // Incheon (col 1)
-    {"148EC573",         2, 7},  // Sejong  (col 2 — 메인 라인. 창고 바로 아래)
-    {"", 3, 7},  // Daejeon (col 3)
+    {"",         0, 7, NOVIA, NOVIA},                                      // Seoul   (col 0)
+    {"647AB573", 1, 7, VIALIST(VIA_INCHEON), VIALIST(VIA_INCHEON_RET)},    // Incheon (col 1)
+    {"148EC573", 2, 7, VIALIST(VIA_SEJONG),  VIALIST(VIA_SEJONG_RET)},     // Sejong  (col 2 — 메인 라인. 창고 바로 아래)
+    {"",         3, 7, NOVIA, NOVIA},                                      // Daejeon (col 3)
 };
 static const uint8_t CITY_COORD_COUNT = sizeof(CITY_COORDS) / sizeof(CityCoord);
 
@@ -67,25 +79,6 @@ static const BlockedCell BLOCKED_CELLS[] = {
     {2, 3}, {1, 5}, {3, 5}
 };
 static const uint8_t BLOCKED_CELL_COUNT = sizeof(BLOCKED_CELLS) / sizeof(BlockedCell);
-
-
-// -------------------- 중도 경유 좌표 (soft waypoint) --------------------
-// 도시로 가기 전, 순서대로 이 좌표들을 경유 시도한다 (왕복의 가는 길에만 적용).
-// 단, 다음 경우 그 경유점은 "삭제"하고 건너뛴다(다음 경유점/도시로 계속):
-//   - 랜덤 장애물 좌표와 겹침 (정적 BLOCKED_CELLS 또는 런타임 g_dynBlocked)
-//   - BFS 로 도달 불가 (navigateTo 가 false)
-// 비워 두면(VIA_COORD_COUNT==0) 기능 비활성 — 기존처럼 도시로 직행.
-static const BlockedCell VIA_COORDS[] = {
-    // 예: {1, 4}, {2, 5}
-};
-static const uint8_t VIA_COORD_COUNT = sizeof(VIA_COORDS) / sizeof(BlockedCell);
-
-// 복귀 경유 좌표 (도시 → 창고). 가는 길(VIA_COORDS)과 별개 리스트.
-// 동일 규칙: 장애물 위거나 도달 불가면 그 경유점은 삭제(건너뜀). 비우면 직행.
-static const BlockedCell VIA_COORDS_RETURN[] = {
-    // 예: {2, 5}, {1, 4}
-};
-static const uint8_t VIA_COORD_RETURN_COUNT = sizeof(VIA_COORDS_RETURN) / sizeof(BlockedCell);
 
 
 // -------------------- 직진 모션 프로파일 (가감속 램프) --------------------
