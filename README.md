@@ -32,7 +32,7 @@
 `LifterUp()` 으로 팔레트를 들면 `_hasPayload=true` 가 되고, 이후 모든 회전이 `_CARGO` 변형 상수(더 잘게 쪼갠 가감속 + 낮춘 PWM + 보충한 delay)로 전환되어 팔레트 슬라이드/관성 흔들림을 줄입니다. `LifterDown()` 이 다시 일반 거동으로 되돌립니다.
 
 ### 직진 / 라인트레이싱
-`MOTOR_POWER`(기본 110) 기준으로 **PD 제어**(`Kp`, `Kd`)가 좌/우 PWM 을 조정. [`drive()`](Controller.cpp#L713) 안에서 EEPROM 모터 캘리브가 곱해집니다. 교차로 직전엔 **사전 감속**, 교차로 통과 순간엔 **통과 감속**이 별도로 적용됩니다(§4.4).
+**PD 제어**(`Kp`, `Kd`)가 좌/우 PWM 을 조정하고, base PWM 은 **직진 모션 프로파일**(가감속 램프 슬루)이 만듭니다 — 출발 킥(`DRIVE_START_PWM`) → 가속 → 정속(`MOTOR_POWER`, 기본 140) → 런 마지막 칸 감속(`DRIVE_END_PWM`) → 마지막 교차로 통과 → 정지. 중간 교차로는 정속 무정지 통과. `drive()` 안에서 EEPROM 모터 캘리브가 곱해집니다(§4.4).
 
 ---
 
@@ -42,31 +42,31 @@
 
 | 값 | 위치 | 기본값 | 설명 |
 |---|---|---|---|
-| **`MOTOR_POWER`** | [Settings_robot1.h:79](Settings_robot1.h#L79) | 110 | 일반 라인트레이스 base PWM |
-| **`MOTOR_POWER_CARGO`** | [Settings_robot1.h:83](Settings_robot1.h#L83) | 90 | 화물 적재 시 base PWM |
-| **`CROSSING_PASS_POWER`** | [Settings_robot1.h:88](Settings_robot1.h#L88) | 70 | 교차로 통과 순간 감속 PWM (overshoot 방지) |
-| **`CROSSING_APPROACH_POWER` / `_CARGO`** | [Settings_robot1.h:92](Settings_robot1.h#L92) | 90 / 80 | 교차로 도착 전 사전 감속 PWM |
-| **`CROSSING_APPROACH_MS` / `_CARGO`** | [Settings_robot1.h:97](Settings_robot1.h#L97) | 300 / 400 | 직전 교차로 후 이 시간 지나면 사전 감속 시작 |
-| **`PRECISE_REALIGN_ENABLE`** | [Settings_robot1.h:158](Settings_robot1.h#L158) | 1 | y=0/y=7 도착 시 후진→전진 정렬 dance on/off (0=끔) |
-| **`REALIGN_BACKUP_MS` / `_CREEP_MS`** | [Settings_robot1.h:162](Settings_robot1.h#L162) | 240 / 120 | 정렬 dance 후진 / 전진크리프 시간 (구 SPEED_SCALE 대상) |
-| **`CROSSING_PASS_MS`** | [Settings_robot1.h:168](Settings_robot1.h#L168) | 100 | 교차로 통과 전진 시간 (구 SPEED_SCALE 대상) |
-| **`PID_KP`** | [Settings_robot1.h:110](Settings_robot1.h#L110) | `0.04f` | PD 비례 항 |
-| **`PID_KD`** | [Settings_robot1.h:111](Settings_robot1.h#L111) | `0.3f` | PD 미분 항 (진동 억제) |
-| **`PID_MAX_CORRECTION`** | [Settings_robot1.h:119](Settings_robot1.h#L119) | `30.0f` | 조향 보정 saturation |
-| **`LINEDETECT_NORM_MIN`** | [Settings_robot1.h:137](Settings_robot1.h#L137) | 700 | 교차로 검출 임계값 (정규화 0~1000 기준) |
-| **`LINEDETECT_RAW_FALLBACK`** | [Settings_robot1.h:142](Settings_robot1.h#L142) | 730 | 캘리브 무효 시 폴백 raw 임계값 |
-| **`OBSTACLE_THRESHOLD` / `_SIDE`** | [Settings_robot1.h:146](Settings_robot1.h#L146) | 700 / 700 | IR 장애물 임계값 (중앙 / 좌·우) |
-| **TurnHalf PWM / DELAY (일반/화물)** | [Settings_robot1.h:249](Settings_robot1.h#L249) | 170/330, 120/410 | 180° 속도/각도 |
-| **PivotLeft STRONG/WEAK/DELAY** | [Settings_robot1.h:259](Settings_robot1.h#L259) | 170/120/145 | 좌회전 속도/각도 (화물 120/70/225) |
-| **PivotRight STRONG/WEAK/DELAY** | [Settings_robot1.h:269](Settings_robot1.h#L269) | 170/120/155 | 우회전 속도/각도 (화물 120/70/230) |
-| **`TURN_RAMP_STEPS` / `_STEP_MS`** | [Settings_robot1.h:214](Settings_robot1.h#L214) | 8 / 12 | 가감속 분할/스텝시간 (부드러움). 화물 14/10 |
-| **`TURN_START_PWM`** | [Settings_robot1.h:216](Settings_robot1.h#L216) | 90 | 가감속 시작/끝 PWM (최소 회전 속도) |
-| **`TURN_SETTLE_MS`** | [Settings_robot1.h:230](Settings_robot1.h#L230) | 150 | 회전 후 차체 안정화 대기 |
-| **`SERVO_DOWN` / `SERVO_UP`** | [Settings_robot1.h:174](Settings_robot1.h#L174) | 20° / 80° | 리프터 내림/올림 각도 |
-| **`SERVO_STEP_DEG` / `_STEP_MS`** | [Settings_robot1.h:182](Settings_robot1.h#L182) | 2 / 15 | 리프터 부드러운 슬루 |
+| **`MOTOR_POWER` / `_CARGO`** | [Settings_robot1.h:87](Settings_robot1.h#L87) | 140 / 140 | 정속(cruise) 상한 PWM (일반/화물) |
+| **`DRIVE_START_PWM` / `_CARGO`** | [Settings_robot1.h:81](Settings_robot1.h#L81) | 90 / 90 | 런 출발 킥 PWM |
+| **`DRIVE_END_PWM` / `_CARGO`** | [Settings_robot1.h:93](Settings_robot1.h#L93) | 70 / 70 | 끝(노드) 감속 바닥 = 마지막 교차로 통과 PWM (구 `CROSSING_PASS_POWER`) |
+| **`DRIVE_ACCEL_MS` / `_CARGO`** | [Settings_robot1.h:96](Settings_robot1.h#L96) | 1000 | START→cruise 가속 시간(ms) |
+| **`DRIVE_DECEL_MS` / `_CARGO`** | [Settings_robot1.h:99](Settings_robot1.h#L99) | 130 | cruise→END 감속 시간(ms) |
+| **`DRIVE_BRAKE_CELLS`** | [Settings_robot1.h:103](Settings_robot1.h#L103) | 1 | 런 끝 몇 칸 전부터 감속 시작 |
+| **`PRECISE_REALIGN_ENABLE`** | [Settings_robot1.h:162](Settings_robot1.h#L162) | 0 | y=0/y=7 도착 시 후진→전진 정렬 dance on/off (0=끔) |
+| **`REALIGN_BACKUP_MS` / `_CREEP_MS`** | [Settings_robot1.h:166](Settings_robot1.h#L166) | 240 / 120 | 정렬 dance 후진 / 전진크리프 시간 |
+| **`CROSSING_PASS_MS`** | [Settings_robot1.h:174](Settings_robot1.h#L174) | 100 | 교차로 통과 블라인드 윈도(ms) — 중복 카운트 방지 |
+| **`PID_KP` / `PID_KD`** | [Settings_robot1.h:114](Settings_robot1.h#L114) | `0.09` / `0.24` (식) | PD 비례 / 미분 항 |
+| **`PID_MAX_CORRECTION`** | [Settings_robot1.h:123](Settings_robot1.h#L123) | `25.0f` | 조향 보정 saturation |
+| **`LINEDETECT_NORM_MIN`** | [Settings_robot1.h:141](Settings_robot1.h#L141) | 700 | 교차로 검출 임계값 (정규화 0~1000 기준) |
+| **`LINEDETECT_RAW_FALLBACK`** | [Settings_robot1.h:146](Settings_robot1.h#L146) | 730 | 캘리브 무효 시 폴백 raw 임계값 |
+| **`OBSTACLE_THRESHOLD` / `_SIDE`** | [Settings_robot1.h:150](Settings_robot1.h#L150) | 700 / 700 | IR 장애물 임계값 (중앙 / 좌·우) |
+| **TurnHalf PWM / DELAY (일반/화물)** | [Settings_robot1.h:255](Settings_robot1.h#L255) | 170/330, 120/410 | 180° 속도/각도 |
+| **PivotLeft STRONG/WEAK/DELAY** | [Settings_robot1.h:265](Settings_robot1.h#L265) | 170/120/130 | 좌회전 속도/각도 (화물 120/70/225) |
+| **PivotRight STRONG/WEAK/DELAY** | [Settings_robot1.h:275](Settings_robot1.h#L275) | 170/120/140 | 우회전 속도/각도 (화물 120/70/230) |
+| **`TURN_RAMP_STEPS` / `_STEP_MS`** | [Settings_robot1.h:220](Settings_robot1.h#L220) | 8 / 12 | 가감속 분할/스텝시간 (부드러움). 화물 14/10 |
+| **`TURN_START_PWM`** | [Settings_robot1.h:222](Settings_robot1.h#L222) | 90 | 가감속 시작/끝 PWM (최소 회전 속도) |
+| **`TURN_SETTLE_MS`** | [Settings_robot1.h:236](Settings_robot1.h#L236) | 150 | 회전 후 차체 안정화 대기 |
+| **`SERVO_DOWN` / `SERVO_UP`** | [Settings_robot1.h:180](Settings_robot1.h#L180) | 20° / 80° | 리프터 내림/올림 각도 |
+| **`SERVO_STEP_DEG` / `_STEP_MS`** | [Settings_robot1.h:188](Settings_robot1.h#L188) | 2 / 15 | 리프터 부드러운 슬루 |
 | **`_motorCalibL/R`** | EEPROM (+8/+12) | float | 직진 보정 (별도 캘리브 스케치) |
 
-> **디버그 토글**: `DEBUG_TRACE`([Settings_robot1.h:128](Settings_robot1.h#L128), 기본 0), `DEBUG_APPROACH_TONE`([Settings_robot1.h:103](Settings_robot1.h#L103), 기본 1), `DEBUG_TURN_PAUSE_MS`([Settings_robot1.h:235](Settings_robot1.h#L235), 기본 0). 실주행/대회 전 §8 참고해 정리.
+> **디버그 토글**: `DEBUG_TRACE`([Settings_robot1.h:132](Settings_robot1.h#L132), 기본 0), `DEBUG_APPROACH_TONE`([Settings_robot1.h:107](Settings_robot1.h#L107), 기본 1), `DEBUG_TURN_PAUSE_MS`([Settings_robot1.h:241](Settings_robot1.h#L241), 기본 0). 실주행/대회 전 §8 참고해 정리.
 
 ---
 
@@ -90,8 +90,10 @@
 | 직선에서 좌우 지그재그 | `PID_MAX_CORRECTION` **↓** | §4.4 |
 | 라인 인식 누락 | `LINEDETECT_NORM_MIN` **↓** | §4.4 |
 | 라인 외 잡음에 트립 | `LINEDETECT_NORM_MIN` **↑** | §4.4 |
-| 교차로 지나치고 멈춤(overshoot) | `CROSSING_PASS_POWER` **↓** 또는 `CROSSING_APPROACH_*` **↓** | §4.4 |
-| 교차로 직전 너무 일찍 느려짐 | `CROSSING_APPROACH_MS` **↑** | §4.4 |
+| 노드 지나치고 멈춤(overshoot) | `DRIVE_END_PWM` **↓** 또는 `DRIVE_BRAKE_CELLS` **2** | §4.4 |
+| 긴 직선이 느림 | `MOTOR_POWER` **↑** | §4.4 |
+| 출발 덜컥임 / 가속 급함 | `DRIVE_ACCEL_MS` **↑** | §4.4 |
+| 노드 직전 감속이 약함 | `DRIVE_DECEL_MS` **↓** (급제동) | §4.4 |
 | 교차로 통과 못 넘김 / 과하게 넘김 | `CROSSING_PASS_MS` **↑/↓** | §4.5 |
 | y=0/y=7 도착 정렬이 너무 느림 | `PRECISE_REALIGN_ENABLE` **0** (dance 끔) | §4.5 |
 | 정렬 dance 가 선을 지나침/못 미침 | `REALIGN_BACKUP_MS` **↓/↑** | §4.5 |
@@ -176,28 +178,50 @@
 
 > PD 제어 **원리·예시·튜닝 감**은 [PD제어_가이드.md](PD제어_가이드.md) 참고. 여기는 설정값 레퍼런스.
 
-PD 제어 ([Settings_robot1.h:110](Settings_robot1.h#L110)):
+PD 제어 ([Settings_robot1.h:114](Settings_robot1.h#L114)):
 
 ```cpp
-#define PID_KP               0.04f   // 비례. 곡선 lag ↑ / 진동 ↓
-#define PID_KD               0.3f    // 미분(진동 억제). 진동 ↓ / 보통 Kp 의 5~30배
-#define PID_MAX_CORRECTION   30.0f   // 조향 보정 saturation (좌우 PWM 차 최대 2×).
-                                     //   바깥으로 흘러나감 ↑ / 직선 지그재그 ↓
+#define PID_KP   (0.05f + (+0.8 * 0.05f))  // = 0.09f. 비례. 곡선 lag ↑ / 진동 ↓ (±10% 단위 조절식)
+#define PID_KD   (0.3f  + (-0.2 * 0.3f))   // = 0.24f. 미분(진동 억제). 진동 ↓
+#define PID_MAX_CORRECTION   25.0f         // 조향 보정 saturation (좌우 PWM 차 최대 2×).
+                                           //   바깥으로 흘러나감 ↑ / 직선 지그재그 ↓
 ```
 
-속도/감속 ([Settings_robot1.h:79](Settings_robot1.h#L79)):
+직진 모션 프로파일 ([Settings_robot1.h:81](Settings_robot1.h#L81)) — base PWM 을 매 루프 목표로 **가감속률 제한 슬루**해서 사다리꼴/삼각형 속도 프로파일을 만듭니다 (엔코더 없음 → PWM≈속도 근사). 전 항목 [일반]/[화물(`_CARGO`)] 분리:
 
 ```cpp
-#define MOTOR_POWER           110   // 일반 base PWM
-#define MOTOR_POWER_CARGO      90   // 화물 적재 시 base PWM (빠르면 ↓)
-#define CROSSING_PASS_POWER    70   // 교차로 통과 순간 감속 PWM (overshoot ↓)
-#define CROSSING_APPROACH_POWER         90  // 교차로 도착 전 사전 감속 PWM
-#define CROSSING_APPROACH_POWER_CARGO   80
-#define CROSSING_APPROACH_MS          300   // 직전 교차로 후 이 시간 지나면 감속 시작
-#define CROSSING_APPROACH_MS_CARGO    400
+#define DRIVE_START_PWM        90    // 출발 킥(정지마찰 위).      화물: DRIVE_START_PWM_CARGO
+#define MOTOR_POWER           140    // 정속(cruise) 상한.          화물: MOTOR_POWER_CARGO
+#define DRIVE_END_PWM          70    // 끝(노드) 감속 바닥 = 마지막 교차로 통과 PWM. 화물: DRIVE_END_PWM_CARGO
+#define DRIVE_ACCEL_MS        1000   // START→cruise 가속 시간(ms). 화물: DRIVE_ACCEL_MS_CARGO
+#define DRIVE_DECEL_MS         130   // cruise→END 감속 시간(ms).   화물: DRIVE_DECEL_MS_CARGO
+#define DRIVE_BRAKE_CELLS        1   // 런 끝 N칸 전부터 감속 (일반/화물 공통)
 ```
 
-라인/장애물 검출 ([Settings_robot1.h:137](Settings_robot1.h#L137)):
+> 옛 `CROSSING_APPROACH_*`(사전 감속 스텝)은 이 프로파일로 대체·제거됐고, 옛 `CROSSING_PASS_POWER` 는 `DRIVE_END_PWM` 으로 이름이 통일됐습니다.
+
+**동작** — 같은 heading 으로 이어지는 직선 = "런(run)"이고, 런 단위로 프로파일이 적용됩니다:
+
+```
+0(이전 노드) → DRIVE_START_PWM(출발 킥) → [가속 DRIVE_ACCEL_MS] → MOTOR_POWER(정속)
+   → 런 마지막 DRIVE_BRAKE_CELLS 칸에서 [감속 DRIVE_DECEL_MS] → DRIVE_END_PWM
+   → 마지막 교차로 통과 → Stop/realign(0)
+```
+
+- 중간 교차로는 **정속 무정지 통과**(딥 없음). 감속은 런의 마지막 칸에서만.
+- **7칸 직선** = 가속→정속→감속 사다리꼴. **1칸** = 정속 못 미치고 바로 감속(낮은 피크 삼각형 — 영상 패턴과 동일).
+
+**사용 예제:**
+
+| 목표 | 조정 |
+|---|---|
+| 긴 직선 더 빠르게 | `MOTOR_POWER` ↑ (예 140→170). `base±correction < 255` 와 `PID_*` 재확인 |
+| 출발 덜컥임 / 가속 부드럽게 | `DRIVE_ACCEL_MS` ↑ (예 250→1000) |
+| 노드 직전 더 세게 감속 | `DRIVE_DECEL_MS` ↓ (급제동) |
+| 노드 오버슈트 / 마지막 교차로 놓침 | `DRIVE_END_PWM` ↓ **또는** `DRIVE_BRAKE_CELLS` 2 (한 칸 더 일찍 감속) |
+| 화물만 살살 | `MOTOR_POWER_CARGO` ↓, `DRIVE_ACCEL_MS_CARGO` ↑, `DRIVE_END_PWM_CARGO` ↓ |
+
+라인/장애물 검출 ([Settings_robot1.h:141](Settings_robot1.h#L141)):
 
 ```cpp
 #define LINEDETECT_NORM_MIN          700   // 교차로 검출 임계(정규화 0~1000). 누락 ↓ / 잡음 ↑
@@ -211,17 +235,18 @@ PD 제어 ([Settings_robot1.h:110](Settings_robot1.h#L110)):
 
 ### 4.5 정렬/통과 타이밍 + 정밀 정렬 토글
 
-y=0(창고)/y=7(도시) 도착 시의 후진→전진 정렬 dance 와 교차로 통과 전진 시간 ([Settings_robot1.h:158](Settings_robot1.h#L158)):
+y=0(창고)/y=7(도시) 도착 시의 후진→전진 정렬 dance 와 교차로 통과 블라인드 윈도 ([Settings_robot1.h:162](Settings_robot1.h#L162)):
 
 ```cpp
-#define PRECISE_REALIGN_ENABLE   1    // y=0/y=7 도착 정렬 dance on/off
+#define PRECISE_REALIGN_ENABLE   0    // y=0/y=7 도착 정렬 dance on/off
                                       //   0 = dance 생략(잠깐 정지만) → 빠르지만 정렬 정확도 ↓
 #define REALIGN_BACKUP_MS    240      // dance 후진 시간. 구동 PWM=MOTOR_POWER. 선 지나침 ↓ / 못 미침 ↑
 #define REALIGN_CREEP_MS     120      // 후진 후 라인 재검출 전진 크리프. 구동 PWM=MOTOR_POWER-40
-#define CROSSING_PASS_MS     100      // 교차로 통과 전진 시간. 구동 PWM=CROSSING_PASS_POWER
+#define CROSSING_PASS_MS     100      // 교차로 통과 블라인드 윈도(미샘플 → 중복 카운트 방지).
+                                      //   마지막 교차로는 DRIVE_END_PWM, 중간은 _drivePwm(정속)으로 통과
 ```
 
-> 이 세 시간값은 예전 `SPEED_SCALE` 로 나눠 쓰던 코드 내 하드코딩 상수였고, `SPEED_SCALE` 제거와 함께 Settings 로 분리됐습니다. 모두 "이동 거리 = 구동 PWM × 시간" 이라, 짝이 되는 PWM(`MOTOR_POWER` / `CROSSING_PASS_POWER`)을 바꾸면 거리가 변하니 함께 재튜닝하세요(§7).
+> `REALIGN_*` / `CROSSING_PASS_MS` 는 예전 `SPEED_SCALE` 로 나눠 쓰던 코드 내 하드코딩 상수였고, `SPEED_SCALE` 제거와 함께 Settings 로 분리됐습니다. 모두 "이동 거리 = 구동 PWM × 시간" 이라, 짝이 되는 PWM(`MOTOR_POWER` / `DRIVE_END_PWM`)을 바꾸면 거리가 변하니 함께 재튜닝하세요(§7).
 
 ---
 
@@ -231,7 +256,7 @@ y=0(창고)/y=7(도시) 도착 시의 후진→전진 정렬 dance 와 교차로
    - 워크스페이스의 별도 스케치(`Calibration.ino`, `MotorCalibration.ino`)로 흑/백 raw 값과 모터 calib 을 EEPROM 240번지 이후에 저장.
    - 본 스케치는 시작 시 [`readData()`](Controller.cpp#L847)로 읽어 사용 — 비어 있으면 직진/정규화가 망가짐(§6).
 2. **base 속도 결정** (§4.4)
-   - `MOTOR_POWER` / `MOTOR_POWER_CARGO`. 한 번 정하면 고정 (바꾸면 사전/통과 감속 PWM 순서, PD, 정렬 dance 재점검 — §4.4 주석의 `↔ 함께 확인`).
+   - `MOTOR_POWER`(cruise) / `MOTOR_POWER_CARGO`. 정하면 `DRIVE_END_PWM`(< cruise 유지), `base±correction<255`, PD, 정렬 dance 재점검 — §4.4 주석의 `↔ 함께 확인`.
 3. **직진성 점검** (§4.4)
    - 라인 위 갈지자 없이 진행되는지. `PID_KD` → `PID_KP` → `PID_MAX_CORRECTION` 순으로.
 4. **검출 임계값** (§4.4)
@@ -240,7 +265,7 @@ y=0(창고)/y=7(도시) 도착 시의 후진→전진 정렬 dance 와 교차로
    - 직진 → 정지 → 회전 한 번 → 직진 시퀀스로 90° 확인. `DEBUG_TURN_PAUSE_MS` 로 각도 측정.
    - 일반/화물(`_CARGO`) 각각 조정.
 6. **TurnHalf 180°** (§4.1). ±30 ms 단위.
-7. **사전 감속/통과 감속** (§4.4) 으로 교차로 overshoot 미세 조정.
+7. **직진 모션 프로파일** (§4.4) — `MOTOR_POWER`(cruise) 정하고 `DRIVE_ACCEL_MS`/`DRIVE_DECEL_MS`/`DRIVE_END_PWM`/`DRIVE_BRAKE_CELLS` 로 가감속·노드 overshoot 미세 조정.
 8. 실주행 전 **디버그 토글 정리** (§8).
 
 ---
@@ -283,9 +308,9 @@ y=0(창고)/y=7(도시) 도착 시의 후진→전진 정렬 dance 와 교차로
 
 - `MOTOR_POWER` **↑** → `REALIGN_BACKUP_MS`(후진)·`REALIGN_CREEP_MS`(크리프) 거리가 늘어 선을 지나침 → 시간 **↓**.
 - `MOTOR_POWER` **↓** → 크리프가 `MOTOR_POWER-40` 으로 구동되어 stall 위험. 후진 거리도 짧아짐.
-- `CROSSING_PASS_POWER` 변경 → `CROSSING_PASS_MS`(통과) 거리가 변함.
+- `DRIVE_END_PWM` 변경 → `CROSSING_PASS_MS`(마지막 교차로 통과) 거리가 변함.
 
-각 매크로 위 주석의 **`↔ 함께 확인`** 표시([Settings_robot1.h:79](Settings_robot1.h#L79) 부근)를 따라가면 한 값을 바꿀 때 같이 점검할 변수를 알 수 있습니다. 특히 `MOTOR_POWER` 는 사전/통과 감속 PWM(역전 금지: `평속 > 사전감속 > 통과`)·PD 3종·정렬 dance 와 모두 엮입니다.
+각 매크로 위 주석의 **`↔ 함께 확인`** 표시([Settings_robot1.h:87](Settings_robot1.h#L87) 부근)를 따라가면 한 값을 바꿀 때 같이 점검할 변수를 알 수 있습니다. 특히 `MOTOR_POWER`(cruise) 는 감속 바닥 `DRIVE_END_PWM`(역전 금지: `cruise > DRIVE_END_PWM > 0`)·PD 3종·정렬 dance·`base±correction<255` 와 모두 엮입니다.
 
 ---
 
@@ -297,14 +322,14 @@ y=0(창고)/y=7(도시) 도착 시의 후진→전진 정렬 dance 와 교차로
 
 | 매크로 | 기본 | 켜면 |
 |---|---|---|
-| `DEBUG_TRACE` ([Settings_robot1.h:128](Settings_robot1.h#L128)) | **0** | `LineTrace` 가 200ms마다 raw/정규화 출력. ⚠ 핫 루프 Serial 블로킹으로 교차로 미인식 위험 — 센서 튜닝 시에만 |
-| `DEBUG_APPROACH_TONE` ([Settings_robot1.h:103](Settings_robot1.h#L103)) | **1** | 사전 감속 시작 순간 짧은 부저음(솔 G5). 감속 타이밍 귀로 확인 |
-| `DEBUG_TURN_PAUSE_MS` ([Settings_robot1.h:235](Settings_robot1.h#L235)) | **0** | 매 회전 후 그만큼 정지 → 각도기 측정 |
+| `DEBUG_TRACE` ([Settings_robot1.h:132](Settings_robot1.h#L132)) | **0** | `LineTrace` 가 200ms마다 raw/정규화 출력. ⚠ 핫 루프 Serial 블로킹으로 교차로 미인식 위험 — 센서 튜닝 시에만 |
+| `DEBUG_APPROACH_TONE` ([Settings_robot1.h:107](Settings_robot1.h#L107)) | **1** | 감속 전환(정속→감속) 순간 짧은 부저음(솔 G5). 감속 시작 타이밍 귀로 확인 |
+| `DEBUG_TURN_PAUSE_MS` ([Settings_robot1.h:241](Settings_robot1.h#L241)) | **0** | 매 회전 후 그만큼 정지 → 각도기 측정 |
 
 **상시 출력(코드에 박힌 것):**
 
 - 부팅 시 캘리브 값 + 로봇 식별: `rW=... lW=... rB=... lB=...`, `ROBOT_ID=N GRID=CxR WH=(x,y)`
-- **NavLog 자동 dump** — 직전 트립의 Eval/DynBlock 흐름을 EEPROM 에서 읽어 출력 후 클리어 ([init](Controller.cpp#L212)). 엔트리 수는 `NAVLOG_ENTRIES`([Settings_robot1.h:286](Settings_robot1.h#L286)).
+- **NavLog 자동 dump** — 직전 트립의 Eval/DynBlock 흐름을 EEPROM 에서 읽어 출력 후 클리어 ([init](Controller.cpp#L212)). 엔트리 수는 `NAVLOG_ENTRIES`([Settings_robot1.h:292](Settings_robot1.h#L292)).
 - 네비게이션(**BFS 최단경로**): `Nav: (x1,y1) -> (x2,y2)`, 재계획마다 NavLog `Eval (x,y) hd=.. pathLen=N` (BFS 라 conn0/afterBlk/fwd 필드는 미사용=0).
 - 우회/실패: `Dyn-blocked cell (x,y) count=N` (장애물 칸 동적 차단 등록), `Nav STUCK: no path (BFS)` / `guard exceeded` / `obstacle at start-pad exit`.
 - 교차로 카운트: `LINE!!! :N`
