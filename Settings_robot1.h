@@ -80,6 +80,13 @@ static const BlockedCell VIA_COORDS[] = {
 };
 static const uint8_t VIA_COORD_COUNT = sizeof(VIA_COORDS) / sizeof(BlockedCell);
 
+// 복귀 경유 좌표 (도시 → 창고). 가는 길(VIA_COORDS)과 별개 리스트.
+// 동일 규칙: 장애물 위거나 도달 불가면 그 경유점은 삭제(건너뜀). 비우면 직행.
+static const BlockedCell VIA_COORDS_RETURN[] = {
+    // 예: {2, 5}, {1, 4}
+};
+static const uint8_t VIA_COORD_RETURN_COUNT = sizeof(VIA_COORDS_RETURN) / sizeof(BlockedCell);
+
 
 // -------------------- 직진 모션 프로파일 (가감속 램프) --------------------
 // LineTrace 가 base PWM 을 매 루프 목표로 가감속률 제한 슬루 → 사다리꼴/삼각형 속도 프로파일.

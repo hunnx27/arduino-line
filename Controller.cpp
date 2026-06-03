@@ -491,26 +491,8 @@ void Controller::ProcessRFIDRead()
             noTone(pinBuzzer);
             delay(500);
 
-            // ── 1-a) 중도 경유점 (soft waypoint) ──
-            // VIA_COORDS 를 순서대로 경유 시도. 장애물 위거나 도달 불가면 그 점은 삭제(건너뜀).
-            for (uint8_t v = 0; v < VIA_COORD_COUNT; v++) {
-                int8_t vx = VIA_COORDS[v].x, vy = VIA_COORDS[v].y;
-                bool offGrid = (vx < 0 || vx >= GRID_COLS || vy < 0 || vy >= GRID_ROWS);
-                if (offGrid || isBlockedCell(vx, vy)) {
-                    if (Serial) {
-                        Serial.print(F("Via skip (blocked) (")); Serial.print(vx);
-                        Serial.print(F(",")); Serial.print(vy); Serial.println(F(")"));
-                    }
-                    continue;
-                }
-                if (!navigateTo(vx, vy)) {
-                    if (Serial) {
-                        Serial.print(F("Via skip (unreachable) (")); Serial.print(vx);
-                        Serial.print(F(",")); Serial.print(vy); Serial.println(F(")"));
-                    }
-                    continue;   // 도달 불가 → 그 경유점 삭제, 다음 경유점/도시로 계속
-                }
-            }
+            // ── 1-a) 중도 경유점 (soft waypoint, 가는 길) ──
+            traverseVias(VIA_COORDS, VIA_COORD_COUNT);
 
             bool reached = navigateTo(tx, ty);
 
@@ -529,6 +511,8 @@ void Controller::ProcessRFIDRead()
             }
 
             // ── 3) 물류창고로 복귀 (성공/실패 무관) ──
+            // 복귀 경유점 (soft waypoint, 오는 길). 가는 길과 별개 리스트.
+            traverseVias(VIA_COORDS_RETURN, VIA_COORD_RETURN_COUNT);
             navigateTo(WAREHOUSE_X, WAREHOUSE_Y);
 
             // 창고 도착 — 항상 도시 방향(N) 으로 정렬 (다음 RFID 태깅 대기 자세)
@@ -993,6 +977,30 @@ bool Controller::computeBfsPath(int8_t tx, int8_t ty) {
         a = _pathY[i];        _pathY[i] = _pathY[_pathLen - 1 - i]; _pathY[_pathLen - 1 - i] = a;
     }
     return true;
+}
+
+// soft waypoint 경유 — vias 를 순서대로 navigateTo 한다.
+// 경유점이 (1) 그리드 밖 / (2) 장애물 좌표(BLOCKED_CELLS·g_dynBlocked) 위 /
+// (3) BFS 도달 불가 면 그 점은 삭제(건너뜀)하고 다음 경유점으로 계속한다.
+void Controller::traverseVias(const BlockedCell* vias, uint8_t count) {
+    for (uint8_t v = 0; v < count; v++) {
+        int8_t vx = vias[v].x, vy = vias[v].y;
+        bool offGrid = (vx < 0 || vx >= GRID_COLS || vy < 0 || vy >= GRID_ROWS);
+        if (offGrid || isBlockedCell(vx, vy)) {
+            if (Serial) {
+                Serial.print(F("Via skip (blocked) (")); Serial.print(vx);
+                Serial.print(F(",")); Serial.print(vy); Serial.println(F(")"));
+            }
+            continue;
+        }
+        if (!navigateTo(vx, vy)) {
+            if (Serial) {
+                Serial.print(F("Via skip (unreachable) (")); Serial.print(vx);
+                Serial.print(F(",")); Serial.print(vy); Serial.println(F(")"));
+            }
+            continue;   // 도달 불가 → 그 경유점 삭제, 다음 경유점으로 계속
+        }
+    }
 }
 
 // 좌표 네비게이션 (BFS 최단경로).

@@ -221,6 +221,9 @@ public:
 
     // BFS 최단경로를 _pathX/_pathY 에 채움 (출발칸 제외, 목표 포함). 도달 불가 시 false.
     bool computeBfsPath(int8_t tx, int8_t ty);
+
+    // soft waypoint 리스트를 순서대로 경유 — 장애물 위거나 도달 불가면 그 점은 건너뜀.
+    void traverseVias(const BlockedCell* vias, uint8_t count);
 };
 
 #endif // CONTROLLER_H
